@@ -9,6 +9,10 @@ dist-ssr/
 src-tauri/target/
 src-tauri/gen/
 
+# Spike output artifacts (throwaway, phase 0.5 — see tasks.md)
+src-tauri/spike_scap_output.bmp
+src-tauri/spike_scap_output.png
+
 # Env & secrets
 .env
 .env.local

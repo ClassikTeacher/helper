@@ -25,9 +25,56 @@ serde_json = "1"
 base64 = "0.22"
 
 # --- Added per phase (kept out until needed, see tasks.md) ---
-# scap = "0.0.8"          # phase 1: screen capture (Win/Linux)
+scap = "0.1.0-beta.1"    # spike 0.5 / phase 1: screen capture (Win/Linux) — patched, see vendor/scap/NOTES.md
 # ort = "2"               # phase 6: ONNX Runtime for local OCR
 # keyring = "3"           # secrets: OS keychain (replaces the in-memory stub)
+
+# sqlite-vec (phase 4): registered process-wide via `sqlite3_auto_extension`
+# (see spike_sqlite_vec.rs) — tauri-plugin-sql has no hook to load extensions
+# per-connection, so this is the workaround. `libsqlite3-sys` version MUST
+# stay semver-compatible with the one `sqlx-sqlite` resolves (via
+# `tauri-plugin-sql`'s `sqlite` feature -> `sqlx/sqlite` -> bundled), so Cargo
+# unifies to a single compiled copy of SQLite — otherwise auto_extension
+# registered on one copy would not affect connections opened via the other.
+sqlite-vec = "0.1.10-alpha.4"
+libsqlite3-sys = "0.30"
+
+# reqwest+SSE (phase 2 / spike 0.5): secure-native LLM streaming, see
+# spike_llm_stream.rs and native/llm in plan.md. rustls-tls avoids depending
+# on a system OpenSSL install on Windows.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+futures-util = "0.3"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio"] }
+
+[[example]]
+name = "spike_scap"
+path = "examples/spike_scap.rs"
+
+[[example]]
+name = "spike_sqlite_vec"
+path = "examples/spike_sqlite_vec.rs"
+
+[[example]]
+name = "spike_llm_stream"
+path = "examples/spike_llm_stream.rs"
+
+# scap 0.1.0-beta.1 (and 0.0.8) fail to compile on Windows against the
+# currently published windows-capture 1.5.0 (upstream API drift, unfixed on
+# crates.io — https://github.com/CapSoftware/scap/issues/180). Patched a
+# local vendor copy with the community-known fix. See vendor/scap/NOTES.md
+# and decisions.md (спайк scap) for details. Remove this patch once upstream
+# publishes a fixed release compatible with windows-capture >=1.5.0.
+#
+# sqlite-vec 0.1.10-alpha.4's published crate is missing sqlite-vec-diskann.c
+# / sqlite-vec-rescore.c that its own default build config requires. Patched
+# build.rs to disable those experimental features. See
+# vendor/sqlite-vec/NOTES.md and decisions.md (спайк sqlite-vec).
+[patch.crates-io]
+scap = { path = "vendor/scap" }
+sqlite-vec = { path = "vendor/sqlite-vec" }
 
 [profile.release]
 codegen-units = 1
