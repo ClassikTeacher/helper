@@ -1,0 +1,36 @@
+[package]
+name = "ai-helper"
+version = "0.0.0"
+description = "Desktop AI screen-assistant"
+authors = ["Konstantin Fedetsov"]
+edition = "2021"
+rust-version = "1.77"
+
+# The library exposes the composition root + modules so they are unit-testable.
+[lib]
+name = "ai_helper_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+tauri-plugin-store = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+
+# --- Added per phase (kept out until needed, see tasks.md) ---
+# scap = "0.0.8"          # phase 1: screen capture (Win/Linux)
+# ort = "2"               # phase 6: ONNX Runtime for local OCR
+# keyring = "3"           # secrets: OS keychain (replaces the in-memory stub)
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

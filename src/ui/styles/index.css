@@ -1,0 +1,15 @@
+@import 'tailwindcss';
+
+/* Transparent root so the overlay HUD blends over other windows. */
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+}
+
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
