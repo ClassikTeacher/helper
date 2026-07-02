@@ -28,7 +28,15 @@ base64 = "0.22"
 scap = "0.1.0-beta.1"    # spike 0.5 / phase 1: screen capture (Win/Linux) — patched, see vendor/scap/NOTES.md
 png = "0.17"             # phase 1: encode captured BGRA frames to PNG for the IPC seam (CaptureResult.imageBase64)
 # ort = "2"               # phase 6: ONNX Runtime for local OCR
-# keyring = "3"           # secrets: OS keychain (replaces the in-memory stub)
+
+# keyring (phase 2): real OS credential store, replacing the phase-0 in-memory
+# SecretStore stub. `windows-native` is the only backend enabled so far
+# (Windows Credential Manager) — this app is Windows-first; add
+# `sync-secret-service`/`apple-native` when actually porting to Linux/macOS
+# rather than guessing at the right crypto/async feature combo now (KISS/YAGNI,
+# see architecture.md §1). No default features exist on this crate — you must
+# opt into a backend per platform, or `Entry::new` falls back to a mock store.
+keyring = { version = "3", features = ["windows-native"] }
 
 # sqlite-vec (phase 4): registered process-wide via `sqlite3_auto_extension`
 # (see spike_sqlite_vec.rs) — tauri-plugin-sql has no hook to load extensions

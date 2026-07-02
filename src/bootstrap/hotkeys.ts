@@ -1,5 +1,7 @@
 import { useHudStore } from '@/ui/store/hud.store';
+import { analyzeAndStream } from './analyze-and-stream';
 import type { AppContainer } from './container.types';
+import type { Screenshot } from '@/core/domain/screenshot';
 
 /** The bootstrap slice the hotkey wiring needs: the capture use-case + overlay. */
 type HotkeysContainer = Pick<AppContainer, 'platform' | 'useCases'>;
@@ -12,9 +14,18 @@ type HotkeysContainer = Pick<AppContainer, 'platform' | 'useCases'>;
 /** Show/hide the HUD — a pure visibility toggle, no capture. */
 export const TOGGLE_HUD_ACCELERATOR =
   import.meta.env.VITE_TOGGLE_HUD_ACCELERATOR || 'CommandOrControl+Shift+Space';
-/** Capture the screen and show it in the HUD. */
+/** Capture the screen, show it in the HUD, and analyze it (main scenario). */
 export const SCREENSHOT_ACCELERATOR =
   import.meta.env.VITE_SCREENSHOT_ACCELERATOR || 'CommandOrControl+Shift+S';
+
+/**
+ * Sent to the model when the user triggers analysis via the hotkey rather
+ * than typing a specific question — the main scenario (plan.md: "хоткей →
+ * скриншот → анализ → стриминг") doesn't require the user to phrase anything.
+ * Follow-up questions about the same screenshot go through `PromptInput`.
+ */
+const DEFAULT_SCREEN_PROMPT =
+  'Describe what is on this screen and answer any question visible on it. Be concise.';
 
 /**
  * Toggle the HUD's visibility. Delegates to `overlay.toggle()`, which flips
@@ -26,26 +37,39 @@ async function toggleHud(container: HotkeysContainer): Promise<void> {
 }
 
 /**
- * Capture the screen and show the result in the HUD. The HUD is hidden first if
- * it happens to be visible, so the overlay itself stays out of the shot; then
- * the screenshot is taken, pushed into the store, and the HUD is shown. A
- * capture failure is surfaced in the HUD (via `fail`) rather than swallowed —
- * there is no tray/notification channel yet.
+ * Capture the screen, show it in the HUD, and analyze it — the app's main
+ * scenario (plan.md §4: hotkey -> screenshot -> analyze -> stream). The HUD
+ * is hidden first if it happens to be visible, so the overlay itself stays
+ * out of the shot; then the screenshot is taken, pushed into the store, and
+ * the HUD is shown before analysis starts (so the user sees the image
+ * immediately, with the answer streaming in underneath).
+ *
+ * A capture failure is surfaced in the HUD (via `fail`) rather than
+ * swallowed, and analysis is skipped entirely in that case — there is
+ * nothing to analyze, and `analyzeAndStream` would otherwise overwrite the
+ * capture error with its own `startStreaming()` reset. There is no
+ * tray/notification channel yet, so the HUD banner is the only feedback path.
  */
-async function captureAndShow(container: HotkeysContainer): Promise<void> {
+async function captureAndAnalyze(container: HotkeysContainer): Promise<void> {
   const { overlay } = container.platform;
 
   if (await overlay.isVisible()) {
     await overlay.hide();
   }
 
+  let screenshot: Screenshot;
   try {
-    const shot = await container.useCases.captureScreenshot.execute();
-    useHudStore.getState().setScreenshot(shot);
+    screenshot = await container.useCases.captureScreenshot.execute();
   } catch (err) {
     useHudStore.getState().fail(err instanceof Error ? err.message : String(err));
+    await overlay.show();
+    return;
   }
+
+  useHudStore.getState().setScreenshot(screenshot);
   await overlay.show();
+
+  await analyzeAndStream(container.useCases, { prompt: DEFAULT_SCREEN_PROMPT, screenshot });
 }
 
 /**
@@ -68,7 +92,7 @@ export async function registerHotkeys(container: HotkeysContainer): Promise<void
       void toggleHud(container);
     }),
     hotkey.register(SCREENSHOT_ACCELERATOR, () => {
-      void captureAndShow(container);
+      void captureAndAnalyze(container);
     }),
   ]);
 

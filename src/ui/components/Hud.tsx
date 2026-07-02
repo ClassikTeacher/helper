@@ -1,8 +1,11 @@
+import { useState } from 'react';
 import { useHudStore } from '@/ui/store/hud.store';
 import { useAnalyzeScreenshot } from '@/ui/hooks/useAnalyzeScreenshot';
+import { useApiKeySettings } from '@/ui/hooks/useApiKeySettings';
 import { MessageList } from './MessageList';
 import { PromptInput } from './PromptInput';
 import { ScreenshotPreview } from './ScreenshotPreview';
+import { SettingsPanel } from './SettingsPanel';
 
 /**
  * The overlay HUD. Reads UI state from the store and delegates work to the
@@ -15,17 +18,38 @@ export function Hud() {
   const screenshot = useHudStore((s) => s.screenshot);
   const hotkeyError = useHudStore((s) => s.hotkeyError);
   const analyze = useAnalyzeScreenshot();
+  const apiKey = useApiKeySettings();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
     <div className="mx-auto mt-8 w-[540px] rounded-xl border border-neutral-700 bg-neutral-900/95 p-4 shadow-2xl backdrop-blur">
       <div className="mb-3 flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">AI-Helper</span>
-        {streaming && <span className="text-xs text-indigo-400">streaming…</span>}
+        <div className="flex items-center gap-3">
+          {streaming && <span className="text-xs text-indigo-400">streaming…</span>}
+          <button
+            type="button"
+            onClick={() => setSettingsOpen((open) => !open)}
+            aria-label="Settings"
+            aria-pressed={settingsOpen}
+            className="text-sm text-neutral-400 hover:text-neutral-200"
+          >
+            ⚙
+          </button>
+        </div>
       </div>
       {hotkeyError && (
         <div className="mb-3 rounded-md border border-amber-600/50 bg-amber-950/50 px-3 py-2 text-xs text-amber-300">
           Не удалось зарегистрировать глобальный хоткей: {hotkeyError}
         </div>
+      )}
+      {!settingsOpen && apiKey.hasKey === false && (
+        <div className="mb-3 rounded-md border border-amber-600/50 bg-amber-950/50 px-3 py-2 text-xs text-amber-300">
+          No OpenRouter API key configured — click ⚙ to add one.
+        </div>
+      )}
+      {settingsOpen && (
+        <SettingsPanel hasKey={apiKey.hasKey} status={apiKey.status} error={apiKey.error} onSave={apiKey.save} />
       )}
       <ScreenshotPreview screenshot={screenshot} />
       <div className="mb-3 max-h-[320px] overflow-y-auto">

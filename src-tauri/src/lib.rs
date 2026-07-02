@@ -10,6 +10,7 @@ pub mod services;
 
 use tauri::Manager;
 
+use infra::openrouter_client::OpenRouterClient;
 use ports::{OcrEngine, SecretStore};
 use services::capture_service::CaptureService;
 
@@ -18,6 +19,12 @@ pub struct AppState {
     pub capture: CaptureService,
     pub ocr: Box<dyn OcrEngine>,
     pub secrets: Box<dyn SecretStore>,
+    /// No trait/fake here (unlike `ocr`/`secrets`): `OpenRouterClient`'s HTTP
+    /// call has nothing worth faking behind a trait — its actual logic (SSE
+    /// framing, request-body shape) is pure functions already covered by unit
+    /// tests in `infra::openrouter_client::tests` (architecture.md §6: traits
+    /// only when a fake is actually needed).
+    pub llm: OpenRouterClient,
 }
 
 impl AppState {
@@ -27,6 +34,7 @@ impl AppState {
             capture: CaptureService::new(Box::new(infra::scap_capturer::ScapCapturer::new())),
             ocr: Box::new(infra::ort_ocr::OrtOcr::new()),
             secrets: Box::new(infra::keyring_secrets::KeyringSecrets::new()),
+            llm: OpenRouterClient::new(),
         }
     }
 }
@@ -60,6 +68,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::capture::capture_screen,
             commands::ocr::ocr_image,
+            commands::llm::llm_stream,
             commands::secrets::secret_get,
             commands::secrets::secret_set,
             commands::overlay_show,

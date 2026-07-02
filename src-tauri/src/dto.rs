@@ -64,7 +64,7 @@ pub struct OcrResult {
 // Mirror of `core/contracts/dto.ts` LLM DTOs (phase 2). Frozen here ahead of
 // the phase-2 command so the seam can't drift while the Rust side is unused.
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LlmRole {
     System,
@@ -72,21 +72,21 @@ pub enum LlmRole {
     Assistant,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum LlmContentPart {
     Text { text: String },
     Image { image_base64: String },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmMessage {
     pub role: LlmRole,
     pub parts: Vec<LlmContentPart>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmStreamRequest {
     /// OpenRouter model slug chosen by ModelRouter (webview side).
@@ -94,7 +94,7 @@ pub struct LlmStreamRequest {
     pub messages: Vec<LlmMessage>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmUsage {
     pub input_tokens: u32,
@@ -103,7 +103,7 @@ pub struct LlmUsage {
 
 /// Discriminated union streamed over `Channel<LlmChunk>`; terminal chunk is
 /// `finish` or `error`. Mirror of `LlmChunkDto` in dto.ts.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum LlmChunk {
     TextDelta {

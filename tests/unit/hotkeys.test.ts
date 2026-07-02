@@ -6,11 +6,23 @@ import {
   SCREENSHOT_ACCELERATOR,
 } from '@/bootstrap/hotkeys';
 import { CaptureScreenshotUseCase } from '@/core/application/use-cases/capture-screenshot.use-case';
+import { AnalyzeScreenshotUseCase } from '@/core/application/use-cases/analyze-screenshot.use-case';
+import { AgentRunner } from '@/core/application/services/agent-runner';
+import { ModelRouter } from '@/core/application/services/model-router';
 import { FakeScreenCaptureAdapter } from '@/infrastructure/mocks/fake-screen-capture.adapter';
+import { FakeLlmAdapter } from '@/infrastructure/mocks/fake-llm.adapter';
 import { useHudStore } from '@/ui/store/hud.store';
 import type { HotkeyHandler, HotkeyPort } from '@/core/application/ports/hotkey.port';
 import type { OverlayPort } from '@/core/application/ports/overlay.port';
 import type { AppContainer } from '@/bootstrap/container.types';
+
+/** Builds a real (fake-adapter-backed) AnalyzeScreenshotUseCase for the container fixture. */
+function createAnalyzeScreenshot(
+  llm = new FakeLlmAdapter('fake answer'),
+  screenCapture = new FakeScreenCaptureAdapter(),
+): AnalyzeScreenshotUseCase {
+  return new AnalyzeScreenshotUseCase(new AgentRunner({ screenCapture, llm, modelRouter: new ModelRouter() }));
+}
 
 class FakeHotkeyPort implements HotkeyPort {
   private handlers = new Map<string, HotkeyHandler>();
@@ -61,18 +73,19 @@ function createContainer(
   hotkey: HotkeyPort,
   overlay: OverlayPort,
   captureScreenshot = new CaptureScreenshotUseCase(new FakeScreenCaptureAdapter()),
+  analyzeScreenshot = createAnalyzeScreenshot(),
 ): Pick<AppContainer, 'platform' | 'useCases'> {
   return {
     platform: { hotkey, overlay },
-    useCases: { captureScreenshot } as AppContainer['useCases'],
+    useCases: { captureScreenshot, analyzeScreenshot } as AppContainer['useCases'],
   };
 }
 
-/** Let the fire-and-forget async hotkey handlers settle. */
+/** Let the fire-and-forget async hotkey handlers (+ their streamed analysis) settle. */
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 beforeEach(() => {
-  useHudStore.setState({ visible: false, screenshot: null, error: null });
+  useHudStore.setState({ visible: false, screenshot: null, error: null, answer: '', streaming: false });
 });
 
 describe('registerHotkeys', () => {
@@ -100,7 +113,7 @@ describe('registerHotkeys', () => {
     expect(useHudStore.getState().screenshot).toBeNull();
   });
 
-  it('screenshot hotkey captures and shows the HUD when hidden', async () => {
+  it('screenshot hotkey captures, shows the HUD, and streams an automatic analysis (main scenario)', async () => {
     const hotkey = new FakeHotkeyPort();
     const overlay = createFakeOverlay();
 
@@ -111,6 +124,29 @@ describe('registerHotkeys', () => {
     expect(overlay.hide).not.toHaveBeenCalled();
     expect(overlay.show).toHaveBeenCalledTimes(1);
     expect(useHudStore.getState().screenshot).not.toBeNull();
+    // plan.md main scenario: hotkey -> screenshot -> analyze -> stream, with
+    // no manual "Ask" step required.
+    expect(useHudStore.getState().answer).toContain('fake answer');
+    expect(useHudStore.getState().streaming).toBe(false);
+    expect(useHudStore.getState().error).toBeNull();
+  });
+
+  it('reuses the just-captured screenshot for analysis instead of capturing a second time', async () => {
+    // Regression test: a second capture here would both waste a call and
+    // risk framing the now-visible HUD itself (nothing hides it a second
+    // time) — see AgentRunner's AnalyzeScreenParams.screenshot doc comment.
+    const hotkey = new FakeHotkeyPort();
+    const overlay = createFakeOverlay();
+    const analysisScreenCapture = new FakeScreenCaptureAdapter();
+    const analysisCaptureSpy = vi.spyOn(analysisScreenCapture, 'capture');
+    const analyzeScreenshot = createAnalyzeScreenshot(new FakeLlmAdapter('fake answer'), analysisScreenCapture);
+
+    await registerHotkeys(createContainer(hotkey, overlay, undefined, analyzeScreenshot));
+    hotkey.press(SCREENSHOT_ACCELERATOR);
+    await flush();
+
+    expect(analysisCaptureSpy).not.toHaveBeenCalled();
+    expect(useHudStore.getState().answer).toContain('fake answer');
   });
 
   it('screenshot hotkey hides the HUD first when visible, so it stays out of the shot', async () => {
@@ -128,7 +164,7 @@ describe('registerHotkeys', () => {
     expect(useHudStore.getState().screenshot).not.toBeNull();
   });
 
-  it('surfaces a capture failure in the HUD instead of swallowing it', async () => {
+  it('surfaces a capture failure in the HUD instead of swallowing it, without attempting analysis', async () => {
     const hotkey = new FakeHotkeyPort();
     const overlay = createFakeOverlay();
     const failing = {
@@ -136,14 +172,19 @@ describe('registerHotkeys', () => {
         throw new Error('capture device unavailable');
       }),
     } as unknown as CaptureScreenshotUseCase;
+    const analyzeScreenshot = createAnalyzeScreenshot();
+    const analyzeSpy = vi.spyOn(analyzeScreenshot, 'execute');
 
-    await registerHotkeys(createContainer(hotkey, overlay, failing));
+    await registerHotkeys(createContainer(hotkey, overlay, failing, analyzeScreenshot));
     hotkey.press(SCREENSHOT_ACCELERATOR);
     await flush();
 
     expect(useHudStore.getState().error).toBe('capture device unavailable');
     // The HUD is still shown so the user sees the error.
     expect(overlay.show).toHaveBeenCalledTimes(1);
+    // Nothing to analyze — and calling it would have overwritten the capture
+    // error with analyzeAndStream's own startStreaming() reset.
+    expect(analyzeSpy).not.toHaveBeenCalled();
   });
 
   it('propagates registration failures instead of swallowing them', async () => {

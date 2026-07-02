@@ -2,6 +2,7 @@
 //! managed state (DI) and delegate. Names must match `IPC_COMMANDS` in TS.
 
 pub mod capture;
+pub mod llm;
 pub mod ocr;
 pub mod secrets;
 
