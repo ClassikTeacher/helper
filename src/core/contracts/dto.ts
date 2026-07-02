@@ -8,7 +8,14 @@
  * See architecture.md §3 "IPC-контракт".
  */
 
-/** Region of the screen to capture. Absent = full primary display. */
+/**
+ * Region of the screen to capture. Absent = full primary display.
+ *
+ * Coordinates are PHYSICAL device pixels (matching the captured frame), NOT
+ * logical/CSS pixels. A future region-select UI must convert from CSS pixels
+ * using the display scale factor before sending, or the crop will be offset on
+ * scaled (125%/150%) displays. See `scap_capturer.rs` `bgra_to_rgba` DPI caveat.
+ */
 export interface CaptureRegionDto {
   readonly x: number;
   readonly y: number;

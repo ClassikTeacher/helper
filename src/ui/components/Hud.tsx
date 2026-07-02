@@ -2,6 +2,7 @@ import { useHudStore } from '@/ui/store/hud.store';
 import { useAnalyzeScreenshot } from '@/ui/hooks/useAnalyzeScreenshot';
 import { MessageList } from './MessageList';
 import { PromptInput } from './PromptInput';
+import { ScreenshotPreview } from './ScreenshotPreview';
 
 /**
  * The overlay HUD. Reads UI state from the store and delegates work to the
@@ -11,6 +12,7 @@ export function Hud() {
   const streaming = useHudStore((s) => s.streaming);
   const answer = useHudStore((s) => s.answer);
   const error = useHudStore((s) => s.error);
+  const screenshot = useHudStore((s) => s.screenshot);
   const hotkeyError = useHudStore((s) => s.hotkeyError);
   const analyze = useAnalyzeScreenshot();
 
@@ -25,6 +27,7 @@ export function Hud() {
           Не удалось зарегистрировать глобальный хоткей: {hotkeyError}
         </div>
       )}
+      <ScreenshotPreview screenshot={screenshot} />
       <div className="mb-3 max-h-[320px] overflow-y-auto">
         <MessageList answer={answer} streaming={streaming} error={error} />
       </div>

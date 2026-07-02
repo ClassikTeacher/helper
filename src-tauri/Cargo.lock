@@ -35,6 +35,7 @@ dependencies = [
  "base64 0.22.1",
  "futures-util",
  "libsqlite3-sys",
+ "png 0.17.16",
  "reqwest 0.12.28",
  "scap",
  "serde",

@@ -1,6 +1,6 @@
 import { createContext, useEffect, useMemo, type ReactNode } from 'react';
 import { createContainer } from './container';
-import { registerHudHotkey, unregisterHudHotkey } from './hotkeys';
+import { registerHotkeys, unregisterHotkeys } from './hotkeys';
 import { useHudStore } from '@/ui/store/hud.store';
 import type { AppContainer, ContainerOverrides } from './container.types';
 
@@ -28,18 +28,18 @@ export function ServicesProvider({ children, container, overrides }: ServicesPro
   );
 
   useEffect(() => {
-    registerHudHotkey(value).catch((err) => {
+    registerHotkeys(value).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
-      console.error('Failed to register HUD hotkey', err);
+      console.error('Failed to register global hotkeys', err);
       // No tray/notification yet (tasks.md phase 0.3) — surface the failure by
-      // showing the HUD itself, otherwise the user has no way to find out the
-      // main entry point (the hotkey) is silently non-functional.
+      // showing the HUD itself, otherwise the user has no way to find out a
+      // main entry point (a hotkey) is silently non-functional.
       useHudStore.getState().setHotkeyError(message);
       void value.platform.overlay.show();
     });
     return () => {
-      unregisterHudHotkey(value).catch((err) => {
-        console.error('Failed to unregister HUD hotkey', err);
+      unregisterHotkeys(value).catch((err) => {
+        console.error('Failed to unregister global hotkeys', err);
       });
     };
   }, [value]);

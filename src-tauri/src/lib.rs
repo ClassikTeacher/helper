@@ -65,6 +65,7 @@ pub fn run() {
             commands::overlay_show,
             commands::overlay_hide,
             commands::overlay_toggle,
+            commands::overlay_is_visible,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -34,4 +34,14 @@ describe('TauriOverlayAdapter', () => {
     expect(invoke).toHaveBeenNthCalledWith(1, IPC_COMMANDS.overlayToggle);
     expect(invoke).toHaveBeenNthCalledWith(2, IPC_COMMANDS.overlayToggle);
   });
+
+  it('isVisible reads native visibility and returns the boolean', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(true);
+    const adapter = new TauriOverlayAdapter();
+
+    const visible = await adapter.isVisible();
+
+    expect(invoke).toHaveBeenCalledWith(IPC_COMMANDS.overlayIsVisible);
+    expect(visible).toBe(true);
+  });
 });

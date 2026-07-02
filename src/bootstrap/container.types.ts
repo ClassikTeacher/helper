@@ -1,4 +1,5 @@
 import type { AnalyzeScreenshotUseCase } from '@/core/application/use-cases/analyze-screenshot.use-case';
+import type { CaptureScreenshotUseCase } from '@/core/application/use-cases/capture-screenshot.use-case';
 import type { SendPromptUseCase } from '@/core/application/use-cases/send-prompt.use-case';
 import type { OverlayPort } from '@/core/application/ports/overlay.port';
 import type { HotkeyPort } from '@/core/application/ports/hotkey.port';
@@ -13,6 +14,7 @@ import type { ModelRouter } from '@/core/application/services/model-router';
 export interface AppContainer {
   readonly useCases: {
     readonly analyzeScreenshot: AnalyzeScreenshotUseCase;
+    readonly captureScreenshot: CaptureScreenshotUseCase;
     readonly sendPrompt: SendPromptUseCase;
   };
   readonly platform: {

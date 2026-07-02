@@ -20,6 +20,8 @@ export const IPC_COMMANDS = {
   overlayHide: 'overlay_hide',
   /** Toggles based on the window's real OS-level visibility (native is the source of truth). */
   overlayToggle: 'overlay_toggle',
+  /** Reads the window's real OS-level visibility (native is the source of truth). */
+  overlayIsVisible: 'overlay_is_visible',
 } as const;
 
 export type IpcCommandName = (typeof IPC_COMMANDS)[keyof typeof IPC_COMMANDS];

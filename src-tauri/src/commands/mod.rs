@@ -29,3 +29,11 @@ pub fn overlay_toggle(window: WebviewWindow) -> Result<(), String> {
         window.show().map_err(|e| e.to_string())
     }
 }
+
+/// Reads the window's actual OS-level visibility. The read-then-act counterpart
+/// to `overlay_toggle` for callers that must know the state before acting (the
+/// hotkey captures only when about to show) — same native source of truth.
+#[tauri::command]
+pub fn overlay_is_visible(window: WebviewWindow) -> Result<bool, String> {
+    window.is_visible().map_err(|e| e.to_string())
+}

@@ -26,6 +26,7 @@ base64 = "0.22"
 
 # --- Added per phase (kept out until needed, see tasks.md) ---
 scap = "0.1.0-beta.1"    # spike 0.5 / phase 1: screen capture (Win/Linux) — patched, see vendor/scap/NOTES.md
+png = "0.17"             # phase 1: encode captured BGRA frames to PNG for the IPC seam (CaptureResult.imageBase64)
 # ort = "2"               # phase 6: ONNX Runtime for local OCR
 # keyring = "3"           # secrets: OS keychain (replaces the in-memory stub)
 

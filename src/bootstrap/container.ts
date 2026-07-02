@@ -1,6 +1,7 @@
 import { ModelRouter } from '@/core/application/services/model-router';
 import { AgentRunner } from '@/core/application/services/agent-runner';
 import { AnalyzeScreenshotUseCase } from '@/core/application/use-cases/analyze-screenshot.use-case';
+import { CaptureScreenshotUseCase } from '@/core/application/use-cases/capture-screenshot.use-case';
 import { SendPromptUseCase } from '@/core/application/use-cases/send-prompt.use-case';
 
 import type { LlmPort } from '@/core/application/ports/llm.port';
@@ -39,6 +40,7 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
   return {
     useCases: {
       analyzeScreenshot: new AnalyzeScreenshotUseCase(agentRunner),
+      captureScreenshot: new CaptureScreenshotUseCase(screenCapture),
       sendPrompt: new SendPromptUseCase(llm, modelRouter),
     },
     platform: { overlay, hotkey },
@@ -66,6 +68,7 @@ const noopOverlay: OverlayPort = {
   show: async () => {},
   hide: async () => {},
   toggle: async () => {},
+  isVisible: async () => false,
 };
 
 const noopHotkey: HotkeyPort = {

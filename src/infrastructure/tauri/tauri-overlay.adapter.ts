@@ -24,4 +24,8 @@ export class TauriOverlayAdapter implements OverlayPort {
   async toggle(): Promise<void> {
     await invoke<void>(IPC_COMMANDS.overlayToggle);
   }
+
+  async isVisible(): Promise<boolean> {
+    return invoke<boolean>(IPC_COMMANDS.overlayIsVisible);
+  }
 }

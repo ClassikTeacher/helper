@@ -3,6 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Coordinates are PHYSICAL device pixels (matching the captured frame), not
+/// logical/CSS pixels — see the DPI caveat in `infra/scap_capturer.rs`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureRegion {
