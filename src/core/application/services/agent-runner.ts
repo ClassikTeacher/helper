@@ -1,18 +1,14 @@
 import type { ScreenCapturePort } from '@/core/application/ports/screen-capture.port';
 import type { LlmPort, LlmMessage } from '@/core/application/ports/llm.port';
-import type { ModelRouter } from './model-router';
-import type { TaskKind } from '@/core/domain/model-route';
 import type { Screenshot } from '@/core/domain/screenshot';
 
 export interface AgentRunnerDeps {
   readonly screenCapture: ScreenCapturePort;
   readonly llm: LlmPort;
-  readonly modelRouter: ModelRouter;
 }
 
 export interface AnalyzeScreenParams {
   readonly prompt: string;
-  readonly task?: TaskKind;
   readonly signal?: AbortSignal;
   /**
    * Reuse an already-captured screenshot instead of capturing a fresh one.
@@ -28,19 +24,19 @@ export interface AnalyzeScreenParams {
 }
 
 /**
- * Orchestrates the main scenario: capture the screen (or reuse a pinned one),
- * route to a model, and stream the answer. Depends only on ports + the pure
- * router — no framework, no Tauri, no fetch. Yields text deltas for the UI to
- * render.
+ * Orchestrates the main scenario: capture the screen (or reuse a pinned one)
+ * and stream the answer. Depends only on ports — no framework, no Tauri, no
+ * fetch. Model selection + provider failover live in the `ResilientLlm` layer
+ * behind `LlmPort`, so the runner just streams and doesn't choose a model.
+ * Yields text deltas for the UI to render.
  */
 export class AgentRunner {
   constructor(private readonly deps: AgentRunnerDeps) {}
 
   async *analyzeScreen(params: AnalyzeScreenParams): AsyncIterable<string> {
-    const { screenCapture, llm, modelRouter } = this.deps;
+    const { screenCapture, llm } = this.deps;
 
     const shot = params.screenshot ?? (await screenCapture.capture());
-    const route = modelRouter.route(params.task ?? 'vision');
 
     const messages: LlmMessage[] = [
       {
@@ -53,7 +49,6 @@ export class AgentRunner {
     ];
 
     for await (const chunk of llm.stream({
-      model: route.model,
       messages,
       ...(params.signal ? { signal: params.signal } : {}),
     })) {

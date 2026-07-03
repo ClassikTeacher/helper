@@ -38,7 +38,13 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
-  // Phase 4: add sqlite-vec embeddings table here as migration #2.
+  // Vector recall (deferred): the `embeddings` vec0 table lands as migration #2
+  // together with the recall work. It can't be defined yet — a `vec0` virtual
+  // table needs a FIXED vector dimension, which depends on the (still
+  // undecided) embedding model. The sqlite-vec EXTENSION is already registered
+  // process-wide at native startup (lib.rs), so the table will "just work" when
+  // added. Keeping it out now also keeps this list portable so the SQLite repos
+  // can be unit-tested against a plain in-memory SQLite (no vec extension).
 ];
 
 export async function applyMigrations(storage: StoragePort): Promise<void> {
@@ -50,11 +56,23 @@ export async function applyMigrations(storage: StoragePort): Promise<void> {
 
   for (const migration of MIGRATIONS) {
     if (appliedIds.has(migration.id)) continue;
-    await storage.execute(migration.sql);
-    await storage.execute(`INSERT INTO _migrations (id, name, applied_at) VALUES (?, ?, ?);`, [
-      migration.id,
-      migration.name,
-      Date.now(),
-    ]);
+
+    // Run the migration DDL and its bookkeeping row as ONE atomic unit, so a
+    // crash between them can't leave a migration half-applied and un-recorded
+    // (which would re-run it on restart — unsafe once a migration is
+    // non-idempotent, e.g. ALTER/backfill).
+    //
+    // It must be a SINGLE execute() call: tauri-plugin-sql runs SQL on a
+    // connection POOL, so BEGIN/COMMIT split across separate execute() calls
+    // could land on different connections and not form one transaction. A
+    // multi-statement string can't carry bind params, so the bookkeeping values
+    // are inlined — all trusted, compile-time constants (never user input).
+    const name = migration.name.replace(/'/g, "''");
+    await storage.execute(
+      `BEGIN;
+${migration.sql}
+INSERT INTO _migrations (id, name, applied_at) VALUES (${migration.id}, '${name}', ${Date.now()});
+COMMIT;`,
+    );
   }
 }

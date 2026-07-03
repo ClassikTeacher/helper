@@ -109,26 +109,41 @@ describe('TauriLlmAdapter', () => {
     resolveInvoke();
   });
 
-  it('stops after a terminal error chunk from native', async () => {
+  it('stops after a terminal error chunk from native, passing retryable through', async () => {
     (invoke as ReturnType<typeof vi.fn>).mockImplementation(async () => {
-      lastChannel!.emit({ type: 'error', message: 'OpenRouter API key is not set. Add it in settings.' });
+      lastChannel!.emit({
+        type: 'error',
+        message: 'OpenRouter API key is not set. Add it in settings.',
+        retryable: false,
+      });
     });
 
     const adapter = new TauriLlmAdapter();
     const chunks = await collect(adapter.stream(REQUEST));
 
     expect(chunks).toEqual([
-      { type: 'error', message: 'OpenRouter API key is not set. Add it in settings.' },
+      { type: 'error', message: 'OpenRouter API key is not set. Add it in settings.', retryable: false },
     ]);
   });
 
-  it('surfaces an invoke rejection as a terminal error chunk', async () => {
+  it('preserves a retryable error flag from native (so failover can trigger)', async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      lastChannel!.emit({ type: 'error', message: 'OpenRouter HTTP 503: unavailable', retryable: true });
+    });
+
+    const adapter = new TauriLlmAdapter();
+    const chunks = await collect(adapter.stream(REQUEST));
+
+    expect(chunks).toEqual([{ type: 'error', message: 'OpenRouter HTTP 503: unavailable', retryable: true }]);
+  });
+
+  it('surfaces an invoke rejection as a non-retryable terminal error chunk', async () => {
     (invoke as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('IPC transport failed'));
 
     const adapter = new TauriLlmAdapter();
     const chunks = await collect(adapter.stream(REQUEST));
 
-    expect(chunks).toEqual([{ type: 'error', message: 'IPC transport failed' }]);
+    expect(chunks).toEqual([{ type: 'error', message: 'IPC transport failed', retryable: false }]);
   });
 
   it('stops yielding once the abort signal fires, without throwing', async () => {

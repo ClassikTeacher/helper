@@ -17,7 +17,13 @@ export interface LlmMessage {
 }
 
 export interface LlmStreamRequest {
-  readonly model: ModelSlug;
+  /**
+   * Target model slug. Optional because the resilient failover layer
+   * (`ResilientLlm`) owns model selection and fills this in per attempt as it
+   * walks the chain. Callers (use-cases) leave it unset; the native/dev
+   * adapters always receive a concrete slug from `ResilientLlm`.
+   */
+  readonly model?: ModelSlug;
   readonly messages: readonly LlmMessage[];
   readonly signal?: AbortSignal;
 }
@@ -44,6 +50,15 @@ export interface LlmFinish {
 export interface LlmError {
   readonly type: 'error';
   readonly message: string;
+  /**
+   * Whether this failure is worth retrying on a DIFFERENT model — set by the
+   * side that knows the true cause (native: HTTP status / network / no-key).
+   * `true` for transient/provider-side failures (model unavailable, 429/5xx,
+   * network); `false` for failures that would recur on every model (missing
+   * API key, auth, malformed request). `ResilientLlm` consults this to decide
+   * whether to fail over to the next model in the chain.
+   */
+  readonly retryable: boolean;
 }
 
 /**

@@ -50,7 +50,9 @@ impl OpenRouterClient {
         {
             Ok(resp) => resp,
             Err(e) => {
-                send_error(channel, format!("OpenRouter request failed: {e}"));
+                // Network/transport failure reaching OpenRouter — transient, so
+                // another model (or a retry) may well succeed: retryable.
+                send_error(channel, format!("OpenRouter request failed: {e}"), true);
                 return;
             }
         };
@@ -58,7 +60,8 @@ impl OpenRouterClient {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            send_error(channel, format!("OpenRouter HTTP {status}: {text}"));
+            let retryable = is_transient_status(status.as_u16());
+            send_error(channel, format!("OpenRouter HTTP {status}: {text}"), retryable);
             return;
         }
 
@@ -77,7 +80,8 @@ impl OpenRouterClient {
             let bytes = match item {
                 Ok(b) => b,
                 Err(e) => {
-                    send_error(channel, format!("OpenRouter stream read failed: {e}"));
+                    // Transient read failure on the byte stream — retryable.
+                    send_error(channel, format!("OpenRouter stream read failed: {e}"), true);
                     return;
                 }
             };
@@ -101,11 +105,24 @@ impl OpenRouterClient {
         // The HTTP body ended without an explicit terminator (`[DONE]` or a
         // `finish_reason` chunk) — surface it instead of leaving the webview
         // awaiting a stream that silently stopped.
+        // Provider closed the stream without a terminator — treat as a
+        // transient provider hiccup: retryable (the webview only fails over if
+        // no content was produced).
         send_error(
             channel,
             "OpenRouter stream ended without a finish signal".to_string(),
+            true,
         );
     }
+}
+
+/// Failover policy: which OpenRouter HTTP statuses are transient / provider-side
+/// and thus worth retrying on a DIFFERENT model. All 5xx (server/provider
+/// errors) plus 408 (timeout), 409 (conflict), 425 (too early) and 429 (rate
+/// limit) are transient; other 4xx (400/401/403/404 — bad request, auth,
+/// not-found) would recur on every model and are NOT retryable.
+fn is_transient_status(status: u16) -> bool {
+    status >= 500 || matches!(status, 408 | 409 | 425 | 429)
 }
 
 impl Default for OpenRouterClient {
@@ -114,8 +131,8 @@ impl Default for OpenRouterClient {
     }
 }
 
-fn send_error(channel: &Channel<LlmChunk>, message: String) {
-    let _ = channel.send(LlmChunk::Error { message });
+fn send_error(channel: &Channel<LlmChunk>, message: String, retryable: bool) {
+    let _ = channel.send(LlmChunk::Error { message, retryable });
 }
 
 /// Builds the OpenAI-compatible chat-completions request body. `usage.include`
@@ -290,6 +307,20 @@ mod tests {
             "multi-byte codepoint corrupted across a chunk boundary: {:?}",
             events[0]
         );
+    }
+
+    #[test]
+    fn is_transient_status_flags_5xx_and_transient_4xx_as_retryable() {
+        for status in [500, 502, 503, 504, 529, 408, 409, 425, 429] {
+            assert!(is_transient_status(status), "{status} should be retryable");
+        }
+    }
+
+    #[test]
+    fn is_transient_status_treats_auth_and_bad_request_as_terminal() {
+        for status in [400, 401, 403, 404, 422] {
+            assert!(!is_transient_status(status), "{status} should not be retryable");
+        }
     }
 
     #[test]

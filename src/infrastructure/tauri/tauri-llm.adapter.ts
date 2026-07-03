@@ -77,7 +77,10 @@ export class TauriLlmAdapter implements LlmPort {
 
         if (invokeSettled) {
           if (invokeError) {
-            yield { type: 'error', message: toErrorMessage(invokeError) };
+            // An invoke rejection is an IPC/command failure (not a provider
+            // error) — the same call would fail for any model, so don't fail
+            // over; surface it.
+            yield { type: 'error', message: toErrorMessage(invokeError), retryable: false };
           }
           return;
         }
@@ -97,6 +100,12 @@ function toErrorMessage(error: unknown): string {
 }
 
 function toStreamRequestDto(request: LlmStreamRequest): LlmStreamRequestDto {
+  // `model` is optional on the port (the ResilientLlm layer fills it per
+  // attempt), but native requires a concrete slug. In the wired app this is
+  // always set by ResilientLlm before reaching here; guard loudly otherwise.
+  if (!request.model) {
+    throw new Error('TauriLlmAdapter requires a concrete model slug (set by ResilientLlm)');
+  }
   return {
     model: request.model,
     messages: request.messages.map(toMessageDto),
@@ -120,6 +129,6 @@ function fromChunkDto(dto: LlmChunkDto): LlmChunk {
     case 'finish':
       return { type: 'finish', reason: dto.reason, ...(dto.usage ? { usage: dto.usage } : {}) };
     case 'error':
-      return { type: 'error', message: dto.message };
+      return { type: 'error', message: dto.message, retryable: dto.retryable };
   }
 }

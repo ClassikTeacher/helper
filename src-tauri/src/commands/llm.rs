@@ -28,13 +28,19 @@ pub async fn llm_stream(
     let api_key = match state.secrets.get(OPENROUTER_API_KEY_SECRET) {
         Ok(Some(key)) if !key.trim().is_empty() => key,
         Ok(_) => {
+            // Missing key fails identically for every model — not retryable.
             let _ = channel.send(LlmChunk::Error {
                 message: "OpenRouter API key is not set. Add it in settings.".to_string(),
+                retryable: false,
             });
             return Ok(());
         }
         Err(e) => {
-            let _ = channel.send(LlmChunk::Error { message: e });
+            // Keychain/OS error — same for every model, not retryable.
+            let _ = channel.send(LlmChunk::Error {
+                message: e,
+                retryable: false,
+            });
             return Ok(());
         }
     };

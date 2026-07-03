@@ -33,7 +33,7 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 
 - [ ] With no key configured yet, the HUD shows an amber "No OpenRouter API key configured — click ⚙ to add one" banner
 - [ ] Entering a key in the ⚙ settings panel and saving shows "Key configured ✓"; the banner disappears after reopening/re-reading status
-- [ ] Pressing the screenshot hotkey (`Ctrl+Shift+S`) captures, shows the HUD, **and automatically streams an analysis** — no need to type a question first (main scenario, plan.md §4)
+- [ ] Pressing the screenshot hotkey (`Ctrl+Alt+S` by default — `Shift+S` is often claimed by screenshot tools; override via `VITE_SCREENSHOT_ACCELERATOR`) captures, shows the HUD, **and automatically streams an analysis** — no need to type a question first (main scenario, plan.md §4)
 - [ ] Tokens stream progressively into the HUD (not all at once)
 - [ ] A follow-up question typed in the prompt box re-analyzes the **same** pinned screenshot (check: no second capture, and the now-visible HUD itself never shows up in the analyzed image)
 - [ ] Typing a question with no screenshot pinned yet (HUD opened via the toggle hotkey) shows "No screenshot yet — press the screenshot hotkey first." instead of silently capturing

@@ -19,6 +19,11 @@ export class OpenRouterLlmAdapter implements LlmPort {
   }
 
   async *stream(request: LlmStreamRequest): AsyncIterable<LlmChunk> {
+    // `model` is optional on the port (ResilientLlm fills it per attempt); the
+    // provider needs a concrete slug. ResilientLlm always sets it before here.
+    if (!request.model) {
+      throw new Error('OpenRouterLlmAdapter requires a concrete model slug (set by ResilientLlm)');
+    }
     const result = streamText({
       model: this.provider(request.model),
       messages: request.messages.map(toCoreMessage),
@@ -30,7 +35,14 @@ export class OpenRouterLlmAdapter implements LlmPort {
         yield { type: 'text-delta', delta };
       }
     } catch (error: unknown) {
-      yield { type: 'error', message: error instanceof Error ? error.message : String(error) };
+      // Dev-only adapter: don't attempt cross-provider failover here (a single
+      // throwaway dev key + AI-SDK error shapes make classification unreliable);
+      // surface the error as non-retryable.
+      yield {
+        type: 'error',
+        message: error instanceof Error ? error.message : String(error),
+        retryable: false,
+      };
       return;
     }
 

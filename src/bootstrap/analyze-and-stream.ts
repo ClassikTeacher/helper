@@ -18,7 +18,8 @@ export interface AnalyzeAndStreamParams {
  * both callers share one implementation instead of two copies drifting apart.
  */
 export async function analyzeAndStream(
-  useCases: Pick<AppContainer['useCases'], 'analyzeScreenshot'>,
+  useCases: Pick<AppContainer['useCases'], 'analyzeScreenshot'> &
+    Partial<Pick<AppContainer['useCases'], 'recordConversation'>>,
   params: AnalyzeAndStreamParams,
 ): Promise<void> {
   useHudStore.getState().startStreaming();
@@ -27,6 +28,16 @@ export async function analyzeAndStream(
       useHudStore.getState().appendAnswer(delta);
     }
     useHudStore.getState().finishStreaming();
+
+    // Persist the completed exchange (phase 4). Best-effort: a storage failure
+    // must NOT break the answer already streamed to the user, so it's caught
+    // and logged, never rethrown into the HUD.
+    const answer = useHudStore.getState().answer;
+    if (useCases.recordConversation && answer.trim()) {
+      await useCases.recordConversation
+        .execute({ prompt: params.prompt, answer })
+        .catch((err) => console.error('Failed to persist conversation', err));
+    }
   } catch (err) {
     useHudStore.getState().fail(err instanceof Error ? err.message : String(err));
   }

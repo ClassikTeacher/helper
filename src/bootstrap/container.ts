@@ -1,16 +1,19 @@
-import { ModelRouter } from '@/core/application/services/model-router';
-import { envRoutingTable } from './model-routing';
+import { ResilientLlm } from '@/core/application/services/resilient-llm';
+import { buildModelChain } from './model-chain';
 import { AgentRunner } from '@/core/application/services/agent-runner';
 import { AnalyzeScreenshotUseCase } from '@/core/application/use-cases/analyze-screenshot.use-case';
 import { CaptureScreenshotUseCase } from '@/core/application/use-cases/capture-screenshot.use-case';
 import { SendPromptUseCase } from '@/core/application/use-cases/send-prompt.use-case';
 import { ManageApiKeyUseCase } from '@/core/application/use-cases/manage-api-key.use-case';
+import { RecordConversationUseCase } from '@/core/application/use-cases/record-conversation.use-case';
 
 import type { LlmPort } from '@/core/application/ports/llm.port';
 import type { ScreenCapturePort } from '@/core/application/ports/screen-capture.port';
 import type { OverlayPort } from '@/core/application/ports/overlay.port';
 import type { HotkeyPort } from '@/core/application/ports/hotkey.port';
 import type { SecretsPort } from '@/core/application/ports/secrets.port';
+import type { StoragePort } from '@/core/application/ports/storage.port';
+import type { ConversationRepository } from '@/core/application/ports/conversation.repository';
 
 import { TauriScreenCaptureAdapter } from '@/infrastructure/tauri/tauri-screen-capture.adapter';
 import { TauriOverlayAdapter } from '@/infrastructure/tauri/tauri-overlay.adapter';
@@ -18,9 +21,13 @@ import { TauriHotkeyAdapter } from '@/infrastructure/tauri/tauri-hotkey.adapter'
 import { TauriLlmAdapter } from '@/infrastructure/tauri/tauri-llm.adapter';
 import { TauriSecretsAdapter } from '@/infrastructure/tauri/tauri-secrets.adapter';
 import { OpenRouterLlmAdapter } from '@/infrastructure/llm/openrouter-llm.adapter';
+import { TauriStorageAdapter } from '@/infrastructure/persistence/tauri-storage.adapter';
+import { SqliteConversationRepository } from '@/infrastructure/persistence/sqlite-conversation.repository';
+import { applyMigrations } from '@/infrastructure/persistence/migrations';
 import { FakeLlmAdapter } from '@/infrastructure/mocks/fake-llm.adapter';
 import { FakeScreenCaptureAdapter } from '@/infrastructure/mocks/fake-screen-capture.adapter';
 import { InMemorySecretsAdapter } from '@/infrastructure/mocks/in-memory-secrets.adapter';
+import { InMemoryConversationRepository } from '@/infrastructure/mocks/in-memory-conversation.repository';
 
 import type { AppContainer, ContainerOverrides } from './container.types';
 
@@ -35,13 +42,31 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
   const screenCapture: ScreenCapturePort =
     overrides.screenCapture ?? (isTauri ? new TauriScreenCaptureAdapter() : new FakeScreenCaptureAdapter());
 
-  const llm: LlmPort = overrides.llm ?? selectLlm(isTauri);
+  // Wrap the base LLM adapter in the resilient failover layer so a provider
+  // outage / unavailable model transparently falls over to the next model in
+  // the chain (see ResilientLlm). An explicit `llm` override bypasses failover
+  // (tests inject exactly the adapter they want).
+  const llm: LlmPort = overrides.llm ?? new ResilientLlm(selectLlm(isTauri), buildModelChain());
 
   const secrets: SecretsPort =
     overrides.secrets ?? (isTauri ? new TauriSecretsAdapter() : new InMemorySecretsAdapter());
 
-  const modelRouter = overrides.modelRouter ?? new ModelRouter(envRoutingTable());
-  const agentRunner = new AgentRunner({ screenCapture, llm, modelRouter });
+  const agentRunner = new AgentRunner({ screenCapture, llm });
+
+  // Persistence (phase 4). In a Tauri window the repositories run on real SQLite
+  // via tauri-plugin-sql; in a browser/tests they fall back to in-memory stores
+  // (no migrations needed there). `storage` is shared by both repositories so
+  // the whole app uses one connection pool.
+  const storage: StoragePort | null =
+    overrides.storage ?? (isTauri ? new TauriStorageAdapter() : null);
+
+  const conversations: ConversationRepository =
+    overrides.conversationRepository ??
+    (storage ? new SqliteConversationRepository(storage) : new InMemoryConversationRepository());
+
+  // NB: the AgentRepository isn't wired into the container yet — nothing
+  // consumes it until phase 5 (agents). Its Sqlite/InMemory impls exist and are
+  // unit-tested; the `agentRepository` override is reserved for that phase.
 
   const overlay: OverlayPort = overrides.overlay ?? (isTauri ? new TauriOverlayAdapter() : noopOverlay);
   const hotkey: HotkeyPort = overrides.hotkey ?? (isTauri ? new TauriHotkeyAdapter() : noopHotkey);
@@ -50,10 +75,16 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
     useCases: {
       analyzeScreenshot: new AnalyzeScreenshotUseCase(agentRunner),
       captureScreenshot: new CaptureScreenshotUseCase(screenCapture),
-      sendPrompt: new SendPromptUseCase(llm, modelRouter),
+      sendPrompt: new SendPromptUseCase(llm),
       manageApiKey: new ManageApiKeyUseCase(secrets),
+      recordConversation: new RecordConversationUseCase(conversations),
     },
     platform: { overlay, hotkey },
+    persistence: {
+      // Only the real SQLite path needs migrations; in-memory repos have no
+      // schema. Runs on startup (see main.tsx).
+      applyMigrations: storage ? () => applyMigrations(storage) : async () => {},
+    },
   };
 }
 

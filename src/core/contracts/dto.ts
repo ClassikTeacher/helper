@@ -57,7 +57,7 @@ export interface OcrResultDto {
 }
 
 // --- LLM streaming (secure-native, `llm_stream`) ---------------------------
-// The webview assembles the request (model slug via ModelRouter + messages) and
+// The webview assembles the request (model slug via ResilientLlm + messages) and
 // hands it to native, which owns the key and the HTTP call. Chunks come back
 // over a Tauri Channel<LlmChunkDto>. Mirror of the LlmPort shapes, kept as DTOs
 // because they cross the seam. See architecture.md §3, §6.
@@ -79,7 +79,7 @@ export interface LlmMessageDto {
 }
 
 export interface LlmStreamRequestDto {
-  /** OpenRouter model slug chosen by ModelRouter (webview side). */
+  /** OpenRouter model slug chosen by the resilient LLM layer (webview side). */
   readonly model: string;
   readonly messages: readonly LlmMessageDto[];
 }
@@ -93,7 +93,10 @@ export interface LlmUsageDto {
 export type LlmChunkDto =
   | { readonly type: 'text-delta'; readonly delta: string }
   | { readonly type: 'finish'; readonly reason: string; readonly usage?: LlmUsageDto }
-  | { readonly type: 'error'; readonly message: string };
+  // `retryable` tells the webview whether to fail over to the next model in the
+  // chain (transient/provider-side error) or surface the failure as-is (missing
+  // key, auth, bad request). Mirrors `LlmChunk::Error.retryable` in dto.rs.
+  | { readonly type: 'error'; readonly message: string; readonly retryable: boolean };
 
 export interface SecretGetRequestDto {
   readonly key: string;

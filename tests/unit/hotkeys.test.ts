@@ -8,7 +8,6 @@ import {
 import { CaptureScreenshotUseCase } from '@/core/application/use-cases/capture-screenshot.use-case';
 import { AnalyzeScreenshotUseCase } from '@/core/application/use-cases/analyze-screenshot.use-case';
 import { AgentRunner } from '@/core/application/services/agent-runner';
-import { ModelRouter } from '@/core/application/services/model-router';
 import { FakeScreenCaptureAdapter } from '@/infrastructure/mocks/fake-screen-capture.adapter';
 import { FakeLlmAdapter } from '@/infrastructure/mocks/fake-llm.adapter';
 import { useHudStore } from '@/ui/store/hud.store';
@@ -21,7 +20,7 @@ function createAnalyzeScreenshot(
   llm = new FakeLlmAdapter('fake answer'),
   screenCapture = new FakeScreenCaptureAdapter(),
 ): AnalyzeScreenshotUseCase {
-  return new AnalyzeScreenshotUseCase(new AgentRunner({ screenCapture, llm, modelRouter: new ModelRouter() }));
+  return new AnalyzeScreenshotUseCase(new AgentRunner({ screenCapture, llm }));
 }
 
 class FakeHotkeyPort implements HotkeyPort {

@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AgentRunner } from '@/core/application/services/agent-runner';
-import { ModelRouter } from '@/core/application/services/model-router';
 import { FakeLlmAdapter } from '@/infrastructure/mocks/fake-llm.adapter';
 import { FakeScreenCaptureAdapter } from '@/infrastructure/mocks/fake-screen-capture.adapter';
 import type { Screenshot } from '@/core/domain/screenshot';
@@ -22,11 +21,7 @@ describe('AgentRunner.analyzeScreen', () => {
   it('captures a fresh screenshot when none is provided', async () => {
     const screenCapture = new FakeScreenCaptureAdapter();
     const captureSpy = vi.spyOn(screenCapture, 'capture');
-    const runner = new AgentRunner({
-      screenCapture,
-      llm: new FakeLlmAdapter('ok'),
-      modelRouter: new ModelRouter(),
-    });
+    const runner = new AgentRunner({ screenCapture, llm: new FakeLlmAdapter('ok') });
 
     await drain(runner.analyzeScreen({ prompt: 'what is this?' }));
 
@@ -41,11 +36,7 @@ describe('AgentRunner.analyzeScreen', () => {
     // time) — see AnalyzeScreenParams.screenshot doc comment.
     const screenCapture = new FakeScreenCaptureAdapter();
     const captureSpy = vi.spyOn(screenCapture, 'capture');
-    const runner = new AgentRunner({
-      screenCapture,
-      llm: new FakeLlmAdapter('ok'),
-      modelRouter: new ModelRouter(),
-    });
+    const runner = new AgentRunner({ screenCapture, llm: new FakeLlmAdapter('ok') });
 
     await drain(runner.analyzeScreen({ prompt: 'what is this?', screenshot: PINNED_SCREENSHOT }));
 
@@ -58,7 +49,6 @@ describe('AgentRunner.analyzeScreen', () => {
     const runner = new AgentRunner({
       screenCapture: new FakeScreenCaptureAdapter('different-bytes'),
       llm,
-      modelRouter: new ModelRouter(),
     });
 
     await drain(runner.analyzeScreen({ prompt: 'what is this?', screenshot: PINNED_SCREENSHOT }));
@@ -66,5 +56,17 @@ describe('AgentRunner.analyzeScreen', () => {
     const request = streamSpy.mock.calls[0]?.[0];
     const imagePart = request?.messages[0]?.parts.find((p) => p.kind === 'image');
     expect(imagePart).toEqual({ kind: 'image', imageBase64: PINNED_SCREENSHOT.imageBase64 });
+  });
+
+  it('does not choose a model — that is the resilient LLM layer\'s job', async () => {
+    // AgentRunner no longer selects a model; it leaves `model` unset and the
+    // ResilientLlm decorator fills it per attempt.
+    const llm = new FakeLlmAdapter('ok');
+    const streamSpy = vi.spyOn(llm, 'stream');
+    const runner = new AgentRunner({ screenCapture: new FakeScreenCaptureAdapter(), llm });
+
+    await drain(runner.analyzeScreen({ prompt: 'what is this?' }));
+
+    expect(streamSpy.mock.calls[0]?.[0].model).toBeUndefined();
   });
 });

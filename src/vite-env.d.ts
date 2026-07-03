@@ -2,10 +2,10 @@
 
 interface ImportMetaEnv {
   readonly VITE_OPENROUTER_API_KEY?: string;
+  /** Primary model tried first. */
   readonly VITE_DEFAULT_MODEL?: string;
-  readonly VITE_DEFAULT_MODEL_VISION?: string;
-  readonly VITE_DEFAULT_MODEL_REASONING?: string;
-  readonly VITE_DEFAULT_MODEL_CODING?: string;
+  /** Comma-separated ordered failover models tried when the primary fails. */
+  readonly VITE_MODEL_FALLBACKS?: string;
   readonly VITE_TOGGLE_HUD_ACCELERATOR?: string;
   readonly VITE_SCREENSHOT_ACCELERATOR?: string;
 }

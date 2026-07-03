@@ -95,7 +95,7 @@ pub struct LlmMessage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmStreamRequest {
-    /// OpenRouter model slug chosen by ModelRouter (webview side).
+    /// OpenRouter model slug chosen by the resilient LLM layer (webview side).
     pub model: String,
     pub messages: Vec<LlmMessage>,
 }
@@ -122,6 +122,11 @@ pub enum LlmChunk {
     },
     Error {
         message: String,
+        /// Whether this failure is worth retrying on a DIFFERENT model. The
+        /// webview's resilient LLM layer uses it to decide whether to fail over
+        /// to the next model in the chain. Mirrors `LlmError.retryable`
+        /// (llm.port.ts) and the `LlmChunkDto` error variant (dto.ts).
+        retryable: bool,
     },
 }
 

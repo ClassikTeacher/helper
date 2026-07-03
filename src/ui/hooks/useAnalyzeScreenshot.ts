@@ -13,7 +13,7 @@ import { analyzeAndStream } from '@/bootstrap/analyze-and-stream';
  * a capture triggered from here).
  */
 export function useAnalyzeScreenshot(): (prompt: string) => Promise<void> {
-  const { analyzeScreenshot } = useServices();
+  const { analyzeScreenshot, recordConversation } = useServices();
   const fail = useHudStore((s) => s.fail);
 
   return useCallback(
@@ -23,8 +23,8 @@ export function useAnalyzeScreenshot(): (prompt: string) => Promise<void> {
         fail('No screenshot yet — press the screenshot hotkey first.');
         return;
       }
-      await analyzeAndStream({ analyzeScreenshot }, { prompt, screenshot });
+      await analyzeAndStream({ analyzeScreenshot, recordConversation }, { prompt, screenshot });
     },
-    [analyzeScreenshot, fail],
+    [analyzeScreenshot, recordConversation, fail],
   );
 }

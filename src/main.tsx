@@ -13,11 +13,19 @@ if (!rootEl) throw new Error('Root element #root not found');
 
 const container = createContainer();
 
+// Apply DB migrations before first render so persistence is ready when the
+// first exchange completes (phase 4). No-op on the in-memory path. A migration
+// failure must not block startup — the app still works minus persistence — so
+// it's logged, not thrown.
+const migrate = container.persistence
+  .applyMigrations()
+  .catch((err) => console.error('Failed to apply DB migrations', err));
+
 // Seed the dev API key into the keychain BEFORE first render, so the HUD's
 // initial "is a key configured?" check already sees it and no key-missing
-// banner flashes. No-op in production builds (see seedDevApiKey). Seeding must
-// not block startup, so we render regardless of its outcome (`finally`).
-void seedDevApiKey(container).finally(() => {
+// banner flashes. No-op in production builds (see seedDevApiKey). Startup must
+// not block on either step, so we render once both settle (`finally`).
+void Promise.allSettled([seedDevApiKey(container), migrate]).finally(() => {
   ReactDOM.createRoot(rootEl).render(
     <React.StrictMode>
       <ServicesProvider container={container}>
