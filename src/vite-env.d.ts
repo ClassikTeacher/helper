@@ -3,6 +3,9 @@
 interface ImportMetaEnv {
   readonly VITE_OPENROUTER_API_KEY?: string;
   readonly VITE_DEFAULT_MODEL?: string;
+  readonly VITE_DEFAULT_MODEL_VISION?: string;
+  readonly VITE_DEFAULT_MODEL_REASONING?: string;
+  readonly VITE_DEFAULT_MODEL_CODING?: string;
   readonly VITE_TOGGLE_HUD_ACCELERATOR?: string;
   readonly VITE_SCREENSHOT_ACCELERATOR?: string;
 }

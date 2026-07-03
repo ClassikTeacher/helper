@@ -14,9 +14,15 @@ type HotkeysContainer = Pick<AppContainer, 'platform' | 'useCases'>;
 /** Show/hide the HUD — a pure visibility toggle, no capture. */
 export const TOGGLE_HUD_ACCELERATOR =
   import.meta.env.VITE_TOGGLE_HUD_ACCELERATOR || 'CommandOrControl+Shift+Space';
-/** Capture the screen, show it in the HUD, and analyze it (main scenario). */
+/**
+ * Capture the screen, show it in the HUD, and analyze it (main scenario).
+ * Default is `Ctrl+Alt+S` rather than the more obvious `Ctrl+Shift+S` because
+ * the latter is very commonly claimed globally by screenshot tools (ShareX,
+ * Lightshot, Snip utilities, vendor overlays), which makes registration fail
+ * with "HotKey already registered". Override via `VITE_SCREENSHOT_ACCELERATOR`.
+ */
 export const SCREENSHOT_ACCELERATOR =
-  import.meta.env.VITE_SCREENSHOT_ACCELERATOR || 'CommandOrControl+Shift+S';
+  import.meta.env.VITE_SCREENSHOT_ACCELERATOR || 'CommandOrControl+Alt+S';
 
 /**
  * Sent to the model when the user triggers analysis via the hotkey rather

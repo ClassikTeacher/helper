@@ -72,8 +72,14 @@ pub enum LlmRole {
     Assistant,
 }
 
+// `rename_all` renames the variant *tags* (Text -> "text", Image -> "image");
+// `rename_all_fields` is what renames the *inner* fields (image_base64 ->
+// "imageBase64"). Without the latter, the `Image` variant deserializes its
+// field as snake_case `image_base64` and rejects the webview's camelCase
+// `imageBase64`, failing with `missing field \`image_base64\``. The wire shape
+// in `dto.ts` (LlmImagePartDto.imageBase64) is the source of truth.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum LlmContentPart {
     Text { text: String },
     Image { image_base64: String },
@@ -136,4 +142,53 @@ pub struct SecretGetResult {
 pub struct SecretSetRequest {
     pub key: String,
     pub value: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Locks the webview <-> Rust wire shape for the image content part. The
+    // webview (dto.ts: LlmImagePartDto) sends camelCase `imageBase64`; a serde
+    // config renaming only the variant tag (not the inner field) regressed this
+    // to snake_case `image_base64` and broke `llm_stream` with an "invalid args
+    // `request` ... missing field `image_base64`" rejection.
+    #[test]
+    fn deserializes_camel_case_image_content_part_from_the_webview() {
+        let json = r#"{
+            "model": "anthropic/claude-haiku-4.5",
+            "messages": [
+                { "role": "user", "parts": [
+                    { "kind": "text", "text": "describe" },
+                    { "kind": "image", "imageBase64": "QUJD" }
+                ] }
+            ]
+        }"#;
+
+        let request: LlmStreamRequest = serde_json::from_str(json).unwrap();
+
+        assert_eq!(request.model, "anthropic/claude-haiku-4.5");
+        assert_eq!(request.messages[0].role, LlmRole::User);
+        assert_eq!(
+            request.messages[0].parts,
+            vec![
+                LlmContentPart::Text {
+                    text: "describe".to_string()
+                },
+                LlmContentPart::Image {
+                    image_base64: "QUJD".to_string()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn serializes_image_content_part_back_to_camel_case() {
+        let part = LlmContentPart::Image {
+            image_base64: "QUJD".to_string(),
+        };
+        let value = serde_json::to_value(&part).unwrap();
+        assert_eq!(value["kind"], "image");
+        assert_eq!(value["imageBase64"], "QUJD");
+    }
 }

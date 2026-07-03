@@ -11,8 +11,8 @@ export type ModelRoutingTable = Readonly<Record<TaskKind, ModelSlug>>;
 
 export const DEFAULT_ROUTING_TABLE: ModelRoutingTable = {
   'quick-answer': 'anthropic/claude-haiku-4.5',
-  vision: 'google/gemini-3-flash-lite',
-  reasoning: 'deepseek/deepseek-v4-flash',
+  vision: 'google/gemini-3.1-flash-lite',
+  reasoning: 'google/gemini-3.1-flash-lite',
   coding: 'anthropic/claude-haiku-4.5',
 };
 

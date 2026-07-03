@@ -1,4 +1,5 @@
 import { ModelRouter } from '@/core/application/services/model-router';
+import { envRoutingTable } from './model-routing';
 import { AgentRunner } from '@/core/application/services/agent-runner';
 import { AnalyzeScreenshotUseCase } from '@/core/application/use-cases/analyze-screenshot.use-case';
 import { CaptureScreenshotUseCase } from '@/core/application/use-cases/capture-screenshot.use-case';
@@ -39,7 +40,7 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
   const secrets: SecretsPort =
     overrides.secrets ?? (isTauri ? new TauriSecretsAdapter() : new InMemorySecretsAdapter());
 
-  const modelRouter = overrides.modelRouter ?? new ModelRouter();
+  const modelRouter = overrides.modelRouter ?? new ModelRouter(envRoutingTable());
   const agentRunner = new AgentRunner({ screenCapture, llm, modelRouter });
 
   const overlay: OverlayPort = overrides.overlay ?? (isTauri ? new TauriOverlayAdapter() : noopOverlay);
