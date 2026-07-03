@@ -132,9 +132,10 @@ describe('registerHotkeys', () => {
   });
 
   it('reuses the just-captured screenshot for analysis instead of capturing a second time', async () => {
-    // Regression test: a second capture here would both waste a call and
-    // risk framing the now-visible HUD itself (nothing hides it a second
-    // time) — see AgentRunner's AnalyzeScreenParams.screenshot doc comment.
+    // Regression test: a second capture here would waste a call and re-grab the
+    // screen for no reason — see AgentRunner's AnalyzeScreenParams.screenshot
+    // doc comment. (The now-visible HUD would not appear in a second shot either
+    // way: it is content-protected, WDA_EXCLUDEFROMCAPTURE.)
     const hotkey = new FakeHotkeyPort();
     const overlay = createFakeOverlay();
     const analysisScreenCapture = new FakeScreenCaptureAdapter();
@@ -149,7 +150,7 @@ describe('registerHotkeys', () => {
     expect(useHudStore.getState().answer).toContain('fake answer');
   });
 
-  it('screenshot hotkey hides the HUD first when visible, so it stays out of the shot', async () => {
+  it('never hides the HUD before capturing — content protection keeps it out of the shot', async () => {
     const hotkey = new FakeHotkeyPort();
     const overlay = createFakeOverlay();
 
@@ -158,7 +159,10 @@ describe('registerHotkeys', () => {
     hotkey.press(SCREENSHOT_ACCELERATOR);
     await flush();
 
-    expect(overlay.hide).toHaveBeenCalledTimes(1);
+    // The overlay window is content-protected (WDA_EXCLUDEFROMCAPTURE on
+    // Windows), so DWM composites it out of the capture frame without hiding
+    // it — the old hide-before / show-after dance is gone (no flicker).
+    expect(overlay.hide).not.toHaveBeenCalled();
     // Shown once by the test setup + once by the handler after capturing.
     expect(overlay.show).toHaveBeenCalledTimes(2);
     expect(useHudStore.getState().screenshot).not.toBeNull();

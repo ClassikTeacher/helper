@@ -21,8 +21,10 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "resizable": true,
+        "maximizable": false,
         "visible": false,
-        "center": true
+        "center": true,
+        "contentProtected": true
       }
     ],
     "security": {

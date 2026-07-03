@@ -44,11 +44,19 @@ async function toggleHud(container: HotkeysContainer): Promise<void> {
 
 /**
  * Capture the screen, show it in the HUD, and analyze it — the app's main
- * scenario (plan.md §4: hotkey -> screenshot -> analyze -> stream). The HUD
- * is hidden first if it happens to be visible, so the overlay itself stays
- * out of the shot; then the screenshot is taken, pushed into the store, and
- * the HUD is shown before analysis starts (so the user sees the image
- * immediately, with the answer streaming in underneath).
+ * scenario (plan.md §4: hotkey -> screenshot -> analyze -> stream). The
+ * screenshot is taken, pushed into the store, and the HUD is shown before
+ * analysis starts (so the user sees the image immediately, with the answer
+ * streaming in underneath).
+ *
+ * The HUD is NOT hidden before capturing: the overlay window is marked
+ * content-protected (`contentProtected: true` in tauri.conf.json →
+ * `WDA_EXCLUDEFROMCAPTURE` on Windows), so DWM composites it out of every
+ * screen-capture frame — including our own `scap` grab, which uses Windows
+ * Graphics Capture. The window stays visible to the user but never lands in
+ * the shot, which removed the old hide-before / show-after dance (and its
+ * flicker). This is the same mechanism that keeps the HUD off screen-shares.
+ * (Manual-testing DoD: confirm the HUD is absent from the captured image.)
  *
  * A capture failure is surfaced in the HUD (via `fail`) rather than
  * swallowed, and analysis is skipped entirely in that case — there is
@@ -58,10 +66,6 @@ async function toggleHud(container: HotkeysContainer): Promise<void> {
  */
 async function captureAndAnalyze(container: HotkeysContainer): Promise<void> {
   const { overlay } = container.platform;
-
-  if (await overlay.isVisible()) {
-    await overlay.hide();
-  }
 
   let screenshot: Screenshot;
   try {

@@ -23,8 +23,32 @@ export function Hud() {
 
   return (
     <div className="mx-auto mt-8 w-[540px] rounded-xl border border-neutral-700 bg-neutral-900/95 p-4 shadow-2xl backdrop-blur">
-      <div className="mb-3 flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">AI-Helper</span>
+      {/*
+        The header doubles as the window's drag handle. `data-tauri-drag-region`
+        tells the OS to move the (undecorated) window when this element is
+        dragged — the only way to reposition a frameless HUD.
+
+        The value is `"deep"`, not a bare attribute, on purpose: a bare attribute
+        only drags on a *direct* click on that exact element, and React renders
+        a valueless `data-tauri-drag-region` as `="true"` (an undocumented value)
+        — which left most of this thin header (its child wrappers) non-draggable.
+        `"deep"` makes the whole header subtree a drag surface; Tauri still lets
+        interactive elements block it, so the ⚙ button stays clickable and does
+        not start a drag. `cursor-move`/`select-none` give the drag affordance
+        and stop text selection while dragging.
+
+        A drag region also maximizes the window on double-click (Tauri default),
+        which is unwanted for a small fixed HUD — that is disabled declaratively
+        via `maximizable: false` in tauri.conf.json (resizing from edges still
+        works, since `resizable` stays true).
+      */}
+      <div
+        data-tauri-drag-region="deep"
+        className="mb-3 flex cursor-move select-none items-center justify-between"
+      >
+        <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+          AI-Helper
+        </span>
         <div className="flex items-center gap-3">
           {streaming && <span className="text-xs text-indigo-400">streaming…</span>}
           <button
