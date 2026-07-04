@@ -29,13 +29,6 @@ export const MIGRATIONS: readonly Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_messages_conversation
         ON messages(conversation_id, created_at);
-      CREATE TABLE IF NOT EXISTS agents (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        system_prompt TEXT NOT NULL,
-        task TEXT NOT NULL,
-        tools_json TEXT NOT NULL DEFAULT '[]'
-      );
     `,
   },
   // Vector recall (deferred): the `embeddings` vec0 table lands as migration #2

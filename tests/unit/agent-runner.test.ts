@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { AgentRunner } from '@/core/application/services/agent-runner';
 import { FakeLlmAdapter } from '@/infrastructure/mocks/fake-llm.adapter';
 import { FakeScreenCaptureAdapter } from '@/infrastructure/mocks/fake-screen-capture.adapter';
+import { AGENTS } from '@/core/domain/agents-catalog';
+import type { AnalyzeScreenParams } from '@/core/application/services/agent-runner';
 import type { Screenshot } from '@/core/domain/screenshot';
 
 const PINNED_SCREENSHOT: Screenshot = {
@@ -10,6 +12,11 @@ const PINNED_SCREENSHOT: Screenshot = {
   height: 10,
   capturedAt: 0,
 };
+
+/** Baseline solver invocation; individual tests override fields as needed. */
+function solverParams(overrides: Partial<AnalyzeScreenParams> = {}): AnalyzeScreenParams {
+  return { agent: AGENTS.solver, language: 'all', instructions: '', ...overrides };
+}
 
 async function drain(iterable: AsyncIterable<string>): Promise<string> {
   let out = '';
@@ -23,7 +30,7 @@ describe('AgentRunner.analyzeScreen', () => {
     const captureSpy = vi.spyOn(screenCapture, 'capture');
     const runner = new AgentRunner({ screenCapture, llm: new FakeLlmAdapter('ok') });
 
-    await drain(runner.analyzeScreen({ prompt: 'what is this?' }));
+    await drain(runner.analyzeScreen(solverParams()));
 
     expect(captureSpy).toHaveBeenCalledTimes(1);
   });
@@ -38,7 +45,7 @@ describe('AgentRunner.analyzeScreen', () => {
     const captureSpy = vi.spyOn(screenCapture, 'capture');
     const runner = new AgentRunner({ screenCapture, llm: new FakeLlmAdapter('ok') });
 
-    await drain(runner.analyzeScreen({ prompt: 'what is this?', screenshot: PINNED_SCREENSHOT }));
+    await drain(runner.analyzeScreen(solverParams({ screenshot: PINNED_SCREENSHOT })));
 
     expect(captureSpy).not.toHaveBeenCalled();
   });
@@ -51,21 +58,45 @@ describe('AgentRunner.analyzeScreen', () => {
       llm,
     });
 
-    await drain(runner.analyzeScreen({ prompt: 'what is this?', screenshot: PINNED_SCREENSHOT }));
+    await drain(runner.analyzeScreen(solverParams({ screenshot: PINNED_SCREENSHOT })));
 
     const request = streamSpy.mock.calls[0]?.[0];
-    const imagePart = request?.messages[0]?.parts.find((p) => p.kind === 'image');
+    const imagePart = request?.messages
+      .flatMap((m) => m.parts)
+      .find((p) => p.kind === 'image');
     expect(imagePart).toEqual({ kind: 'image', imageBase64: PINNED_SCREENSHOT.imageBase64 });
   });
 
-  it('does not choose a model — that is the resilient LLM layer\'s job', async () => {
+  it('sends the agent system prompt and mixes the language + instructions into the user text', async () => {
+    const llm = new FakeLlmAdapter('ok');
+    const streamSpy = vi.spyOn(llm, 'stream');
+    const runner = new AgentRunner({ screenCapture: new FakeScreenCaptureAdapter(), llm });
+
+    await drain(
+      runner.analyzeScreen(
+        solverParams({ language: 'ts', instructions: 'use React', screenshot: PINNED_SCREENSHOT }),
+      ),
+    );
+
+    const messages = streamSpy.mock.calls[0]?.[0].messages ?? [];
+    const system = messages.find((m) => m.role === 'system');
+    const userText = messages
+      .find((m) => m.role === 'user')
+      ?.parts.find((p) => p.kind === 'text');
+
+    expect(system?.parts[0]).toMatchObject({ kind: 'text', text: AGENTS.solver.systemPrompt });
+    expect(userText?.kind === 'text' && userText.text).toContain('TypeScript');
+    expect(userText?.kind === 'text' && userText.text).toContain('use React');
+  });
+
+  it("does not choose a model — that is the resilient LLM layer's job", async () => {
     // AgentRunner no longer selects a model; it leaves `model` unset and the
     // ResilientLlm decorator fills it per attempt.
     const llm = new FakeLlmAdapter('ok');
     const streamSpy = vi.spyOn(llm, 'stream');
     const runner = new AgentRunner({ screenCapture: new FakeScreenCaptureAdapter(), llm });
 
-    await drain(runner.analyzeScreen({ prompt: 'what is this?' }));
+    await drain(runner.analyzeScreen(solverParams()));
 
     expect(streamSpy.mock.calls[0]?.[0].model).toBeUndefined();
   });

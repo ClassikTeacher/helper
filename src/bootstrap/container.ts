@@ -64,9 +64,9 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
     overrides.conversationRepository ??
     (storage ? new SqliteConversationRepository(storage) : new InMemoryConversationRepository());
 
-  // NB: the AgentRepository isn't wired into the container yet — nothing
-  // consumes it until phase 5 (agents). Its Sqlite/InMemory impls exist and are
-  // unit-tested; the `agentRepository` override is reserved for that phase.
+  // NB: agents (phase 5) are a fixed built-in catalog (`core/domain/agents-catalog.ts`),
+  // not persisted/editable, so there is no AgentRepository to wire — the UI
+  // selects between solver/reviewer and the runner builds the prompt (YAGNI).
 
   const overlay: OverlayPort = overrides.overlay ?? (isTauri ? new TauriOverlayAdapter() : noopOverlay);
   const hotkey: HotkeyPort = overrides.hotkey ?? (isTauri ? new TauriHotkeyAdapter() : noopHotkey);

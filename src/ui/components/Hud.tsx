@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { useHudStore } from '@/ui/store/hud.store';
 import { useAnalyzeScreenshot } from '@/ui/hooks/useAnalyzeScreenshot';
 import { useApiKeySettings } from '@/ui/hooks/useApiKeySettings';
+import { AGENT_LIST, resolveAgent } from '@/core/domain/agents-catalog';
+import { AgentSwitch } from './AgentSwitch';
+import { LanguageSelect } from './LanguageSelect';
 import { MessageList } from './MessageList';
 import { PromptInput } from './PromptInput';
 import { ScreenshotPreview } from './ScreenshotPreview';
@@ -17,9 +20,18 @@ export function Hud() {
   const error = useHudStore((s) => s.error);
   const screenshot = useHudStore((s) => s.screenshot);
   const hotkeyError = useHudStore((s) => s.hotkeyError);
+  const agentId = useHudStore((s) => s.agentId);
+  const language = useHudStore((s) => s.language);
+  const instructions = useHudStore((s) => s.instructions);
+  const activeHint = useHudStore((s) => s.activeHint);
+  const setAgentId = useHudStore((s) => s.setAgentId);
+  const setLanguage = useHudStore((s) => s.setLanguage);
+  const setInstructions = useHudStore((s) => s.setInstructions);
   const analyze = useAnalyzeScreenshot();
   const apiKey = useApiKeySettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const selectedAgent = resolveAgent(agentId);
 
   return (
     <div className="mx-auto mt-8 w-[540px] rounded-xl border border-neutral-700 bg-neutral-900/95 p-4 shadow-2xl backdrop-blur">
@@ -75,11 +87,30 @@ export function Hud() {
       {settingsOpen && (
         <SettingsPanel hasKey={apiKey.hasKey} status={apiKey.status} error={apiKey.error} onSave={apiKey.save} />
       )}
+      {/* Agent switch + (solver-only) language selector. */}
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <AgentSwitch agents={AGENT_LIST} selected={agentId} disabled={streaming} onSelect={setAgentId} />
+        {selectedAgent.requiresLanguage && (
+          <LanguageSelect value={language} disabled={streaming} onChange={setLanguage} />
+        )}
+      </div>
       <ScreenshotPreview screenshot={screenshot} />
+      {/* Shows that the current answer used an extra hint, not just the screenshot. */}
+      {activeHint && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border border-indigo-700/50 bg-indigo-950/40 px-3 py-2 text-xs text-indigo-200">
+          <span className="font-semibold uppercase tracking-wide text-indigo-400">Hint</span>
+          <span className="break-words">{activeHint}</span>
+        </div>
+      )}
       <div className="mb-3 max-h-[320px] overflow-y-auto">
         <MessageList answer={answer} streaming={streaming} error={error} />
       </div>
-      <PromptInput disabled={streaming} onSubmit={analyze} />
+      <PromptInput
+        value={instructions}
+        disabled={streaming}
+        onChange={setInstructions}
+        onSubmit={analyze}
+      />
     </div>
   );
 }

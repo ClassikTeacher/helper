@@ -12,7 +12,7 @@ describe('applyMigrations', () => {
       `SELECT name FROM sqlite_master WHERE type = 'table';`,
     );
     const names = tables.map((t) => t.name);
-    expect(names).toEqual(expect.arrayContaining(['conversations', 'messages', 'agents', '_migrations']));
+    expect(names).toEqual(expect.arrayContaining(['conversations', 'messages', '_migrations']));
     storage.close();
   });
 

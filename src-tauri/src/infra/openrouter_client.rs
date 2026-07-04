@@ -148,10 +148,36 @@ fn build_request_body(request: &LlmStreamRequest) -> Value {
 }
 
 fn to_openai_message(message: &LlmMessage) -> Value {
+    // System messages carry a plain-string `content`, not an array of content
+    // parts. The OpenAI-compatible array form is only reliably accepted for
+    // user/assistant; some providers behind OpenRouter are stricter about the
+    // system role (notably the Gemini mapping to `systemInstruction`) and
+    // expect a string, so a system prompt sent as an array can be silently
+    // dropped on a fallback model. Mirrors the dev adapter
+    // (`openrouter-llm.adapter.ts`), which already stringifies system content.
+    if matches!(message.role, LlmRole::System) {
+        return json!({
+            "role": role_str(&message.role),
+            "content": system_text(&message.parts),
+        });
+    }
     json!({
         "role": role_str(&message.role),
         "content": message.parts.iter().map(to_openai_content_part).collect::<Vec<_>>(),
     })
+}
+
+/// Joins the text parts of a system message into a single string. System
+/// prompts only carry text (never images), so any non-text part is ignored.
+fn system_text(parts: &[LlmContentPart]) -> String {
+    parts
+        .iter()
+        .filter_map(|part| match part {
+            LlmContentPart::Text { text } => Some(text.as_str()),
+            LlmContentPart::Image { .. } => None,
+        })
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 fn role_str(role: &LlmRole) -> &'static str {
@@ -416,5 +442,43 @@ mod tests {
             body["messages"][0]["content"][1]["image_url"]["url"],
             "data:image/png;base64,QUJD"
         );
+    }
+
+    #[test]
+    fn build_request_body_sends_system_content_as_a_plain_string() {
+        // Regression guard: the system role must serialize `content` as a plain
+        // string, NOT an array of content parts. Some providers behind
+        // OpenRouter (e.g. the Gemini `systemInstruction` mapping) reject or
+        // silently drop the array form for the system role, which would strip
+        // the agent's role prompt on a fallback model. The dev adapter
+        // (`openrouter-llm.adapter.ts`) already stringifies system content;
+        // this keeps the native path consistent with it.
+        let request = LlmStreamRequest {
+            model: "openai/gpt-4o-mini".to_string(),
+            messages: vec![
+                LlmMessage {
+                    role: LlmRole::System,
+                    parts: vec![LlmContentPart::Text {
+                        text: "You are a senior code reviewer.".to_string(),
+                    }],
+                },
+                LlmMessage {
+                    role: LlmRole::User,
+                    parts: vec![LlmContentPart::Text {
+                        text: "review this".to_string(),
+                    }],
+                },
+            ],
+        };
+
+        let body = build_request_body(&request);
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert_eq!(
+            body["messages"][0]["content"],
+            "You are a senior code reviewer."
+        );
+        // The user role keeps the array-of-parts shape.
+        assert!(body["messages"][1]["content"].is_array());
+        assert_eq!(body["messages"][1]["content"][0]["text"], "review this");
     }
 }

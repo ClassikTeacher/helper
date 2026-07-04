@@ -1,6 +1,9 @@
 import type { ScreenCapturePort } from '@/core/application/ports/screen-capture.port';
 import type { LlmPort, LlmMessage } from '@/core/application/ports/llm.port';
+import type { Agent } from '@/core/domain/agent';
+import type { ProgrammingLanguage } from '@/core/domain/language';
 import type { Screenshot } from '@/core/domain/screenshot';
+import { buildAgentPrompt } from './agent-prompt';
 
 export interface AgentRunnerDeps {
   readonly screenCapture: ScreenCapturePort;
@@ -8,7 +11,12 @@ export interface AgentRunnerDeps {
 }
 
 export interface AnalyzeScreenParams {
-  readonly prompt: string;
+  /** Which agent (mode) to run — solver or reviewer. */
+  readonly agent: Agent;
+  /** Language hint for the solver; ignored when the agent doesn't need one. */
+  readonly language: ProgrammingLanguage;
+  /** Short free-text hints from the input box (may be empty). */
+  readonly instructions: string;
   readonly signal?: AbortSignal;
   /**
    * Reuse an already-captured screenshot instead of capturing a fresh one.
@@ -24,11 +32,11 @@ export interface AnalyzeScreenParams {
 }
 
 /**
- * Orchestrates the main scenario: capture the screen (or reuse a pinned one)
- * and stream the answer. Depends only on ports — no framework, no Tauri, no
- * fetch. Model selection + provider failover live in the `ResilientLlm` layer
- * behind `LlmPort`, so the runner just streams and doesn't choose a model.
- * Yields text deltas for the UI to render.
+ * Orchestrates the main scenario: capture the screen (or reuse a pinned one),
+ * build the selected agent's prompt, and stream the answer. Depends only on
+ * ports — no framework, no Tauri, no fetch. Model selection + provider failover
+ * live in the `ResilientLlm` layer behind `LlmPort`, so the runner just streams
+ * and doesn't choose a model. Yields text deltas for the UI to render.
  */
 export class AgentRunner {
   constructor(private readonly deps: AgentRunnerDeps) {}
@@ -37,13 +45,23 @@ export class AgentRunner {
     const { screenCapture, llm } = this.deps;
 
     const shot = params.screenshot ?? (await screenCapture.capture());
+    const { system, userText } = buildAgentPrompt({
+      agent: params.agent,
+      language: params.language,
+      instructions: params.instructions,
+    });
 
     const messages: LlmMessage[] = [
+      { role: 'system', parts: [{ kind: 'text', text: system }] },
       {
         role: 'user',
+        // Image before text: for a single-image prompt the model attends best
+        // when the image precedes the question (Anthropic vision guidance). The
+        // accompanying text (language hint + instructions + answer-language
+        // directive) then reads as "given this screenshot, do X".
         parts: [
-          { kind: 'text', text: params.prompt },
           { kind: 'image', imageBase64: shot.imageBase64 },
+          { kind: 'text', text: userText },
         ],
       },
     ];

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createContainer } from '@/bootstrap/container';
 import { FakeLlmAdapter } from '@/infrastructure/mocks/fake-llm.adapter';
 import { FakeScreenCaptureAdapter } from '@/infrastructure/mocks/fake-screen-capture.adapter';
+import { AGENTS } from '@/core/domain/agents-catalog';
 
 describe('AnalyzeScreenshotUseCase (integration via DI container)', () => {
   it('streams the LLM response back to the caller', async () => {
@@ -13,7 +14,11 @@ describe('AnalyzeScreenshotUseCase (integration via DI container)', () => {
 
     // Act
     let output = '';
-    for await (const delta of container.useCases.analyzeScreenshot.execute({ prompt: 'what is on screen?' })) {
+    for await (const delta of container.useCases.analyzeScreenshot.execute({
+      agent: AGENTS.solver,
+      language: 'all',
+      instructions: '',
+    })) {
       output += delta;
     }
 

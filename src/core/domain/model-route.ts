@@ -1,16 +1,10 @@
 /**
  * Domain value-objects for models. Pure — no I/O.
  *
- * `TaskKind` describes what an agent is doing; it is referenced by the `Agent`
- * domain model (phase 5). It no longer selects a model — model choice is now a
- * single resilient chain (a primary `DEFAULT_MODEL` plus an ordered failover
- * list), see `application/services/resilient-llm.ts` + `bootstrap/model-chain.ts`.
+ * Model choice is a single resilient chain (a primary `DEFAULT_MODEL` plus an
+ * ordered failover list), see `application/services/resilient-llm.ts` +
+ * `bootstrap/model-chain.ts`. Agents (phase 5) do not select a model.
  */
-export type TaskKind =
-  | 'quick-answer' // cheap, low latency (default)
-  | 'vision' // screenshot understanding
-  | 'reasoning' // harder multi-step tasks
-  | 'coding';
 
 /** An OpenRouter model slug, e.g. "anthropic/claude-haiku-4.5". */
 export type ModelSlug = string;

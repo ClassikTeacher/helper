@@ -10,7 +10,6 @@ import type { ScreenCapturePort } from '@/core/application/ports/screen-capture.
 import type { SecretsPort } from '@/core/application/ports/secrets.port';
 import type { StoragePort } from '@/core/application/ports/storage.port';
 import type { ConversationRepository } from '@/core/application/ports/conversation.repository';
-import type { AgentRepository } from '@/core/application/ports/agent.repository';
 
 /**
  * The DI container. UI consumes ONLY `useCases` (via useServices). `platform`
@@ -44,5 +43,4 @@ export interface ContainerOverrides {
   readonly secrets?: SecretsPort;
   readonly storage?: StoragePort;
   readonly conversationRepository?: ConversationRepository;
-  readonly agentRepository?: AgentRepository;
 }

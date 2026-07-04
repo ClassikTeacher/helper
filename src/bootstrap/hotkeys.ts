@@ -1,5 +1,6 @@
 import { useHudStore } from '@/ui/store/hud.store';
 import { analyzeAndStream } from './analyze-and-stream';
+import { resolveAgent } from '@/core/domain/agents-catalog';
 import type { AppContainer } from './container.types';
 import type { Screenshot } from '@/core/domain/screenshot';
 
@@ -23,15 +24,6 @@ export const TOGGLE_HUD_ACCELERATOR =
  */
 export const SCREENSHOT_ACCELERATOR =
   import.meta.env.VITE_SCREENSHOT_ACCELERATOR || 'CommandOrControl+Alt+S';
-
-/**
- * Sent to the model when the user triggers analysis via the hotkey rather
- * than typing a specific question — the main scenario (plan.md: "хоткей →
- * скриншот → анализ → стриминг") doesn't require the user to phrase anything.
- * Follow-up questions about the same screenshot go through `PromptInput`.
- */
-const DEFAULT_SCREEN_PROMPT =
-  'Describe what is on this screen and answer any question visible on it. Be concise.';
 
 /**
  * Toggle the HUD's visibility. Delegates to `overlay.toggle()`, which flips
@@ -79,7 +71,16 @@ async function captureAndAnalyze(container: HotkeysContainer): Promise<void> {
   useHudStore.getState().setScreenshot(screenshot);
   await overlay.show();
 
-  await analyzeAndStream(container.useCases, { prompt: DEFAULT_SCREEN_PROMPT, screenshot });
+  // Run whatever agent/language/instructions the user currently has selected in
+  // the HUD. The instructions are read at capture time, so anything typed in the
+  // input box before the hotkey is taken into account (user's requirement).
+  const { agentId, language, instructions } = useHudStore.getState();
+  await analyzeAndStream(container.useCases, {
+    agent: resolveAgent(agentId),
+    language,
+    instructions,
+    screenshot,
+  });
 }
 
 /**
