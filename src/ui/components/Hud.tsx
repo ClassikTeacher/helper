@@ -46,8 +46,9 @@ export function Hud() {
         — which left most of this thin header (its child wrappers) non-draggable.
         `"deep"` makes the whole header subtree a drag surface; Tauri still lets
         interactive elements block it, so the ⚙ button stays clickable and does
-        not start a drag. `cursor-move`/`select-none` give the drag affordance
-        and stop text selection while dragging.
+        not start a drag. `select-none` stops text selection while dragging. The
+        drag cursor is intentionally NOT shown (no `cursor-move`) — the HUD keeps
+        one constant cursor everywhere (see the global rule in styles/index.css).
 
         A drag region also maximizes the window on double-click (Tauri default),
         which is unwanted for a small fixed HUD — that is disabled declaratively
@@ -56,7 +57,7 @@ export function Hud() {
       */}
       <div
         data-tauri-drag-region="deep"
-        className="mb-3 flex cursor-move select-none items-center justify-between"
+        className="mb-3 flex select-none items-center justify-between"
       >
         <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
           AI-Helper

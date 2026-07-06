@@ -13,3 +13,17 @@ body {
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
+
+/*
+  Keep one constant cursor across the whole HUD, no matter what's under the
+  pointer: no text I-beam over inputs/textarea, no move/grab cursor over the
+  drag handle, no pointer over buttons. The HUD is a compact overlay tool and a
+  cursor that morphs as you move reads as noisy. `!important` is needed to beat
+  both the browser's user-agent styles (I-beam on inputs) and Tailwind's cursor
+  utilities.
+*/
+*,
+*::before,
+*::after {
+  cursor: default !important;
+}

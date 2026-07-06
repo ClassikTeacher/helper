@@ -27,7 +27,6 @@ export function AgentSwitch({ agents, selected, disabled = false, onSelect }: Ag
             type="button"
             role="radio"
             aria-checked={isActive}
-            title={agent.description}
             disabled={disabled}
             onClick={() => onSelect(agent.id)}
             className={`flex-1 rounded px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 ${
