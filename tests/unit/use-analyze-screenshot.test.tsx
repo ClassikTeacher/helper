@@ -20,7 +20,7 @@ function wrapperWithContainer(container: ReturnType<typeof createContainer>) {
 
 beforeEach(() => {
   useHudStore.setState({
-    screenshot: null,
+    screenshots: [],
     answer: '',
     streaming: false,
     error: null,
@@ -43,7 +43,9 @@ describe('useAnalyzeScreenshot', () => {
       await result.current();
     });
 
-    expect(useHudStore.getState().error).toBe('No screenshot yet — press the screenshot hotkey first.');
+    expect(useHudStore.getState().error).toBe(
+      'Нет скриншотов для анализа — сделайте хотя бы один (хоткей захвата).',
+    );
     expect(useHudStore.getState().answer).toBe('');
   });
 
@@ -52,7 +54,7 @@ describe('useAnalyzeScreenshot', () => {
       llm: new FakeLlmAdapter('hello from fake'),
       screenCapture: new FakeScreenCaptureAdapter(),
     });
-    useHudStore.getState().setScreenshot(PINNED_SCREENSHOT);
+    useHudStore.getState().addScreenshot(PINNED_SCREENSHOT);
     const { result } = renderHook(() => useAnalyzeScreenshot(), { wrapper: wrapperWithContainer(container) });
 
     await act(async () => {
@@ -72,7 +74,7 @@ describe('useAnalyzeScreenshot', () => {
       llm: new FakeLlmAdapter('answer'),
       screenCapture: new FakeScreenCaptureAdapter(),
     });
-    useHudStore.getState().setScreenshot(PINNED_SCREENSHOT);
+    useHudStore.getState().addScreenshot(PINNED_SCREENSHOT);
     useHudStore.getState().setInstructions('  use React  ');
     const { result } = renderHook(() => useAnalyzeScreenshot(), { wrapper: wrapperWithContainer(container) });
 
@@ -97,7 +99,7 @@ describe('useAnalyzeScreenshot', () => {
       llm: failingLlm,
       screenCapture: new FakeScreenCaptureAdapter(),
     });
-    useHudStore.getState().setScreenshot(PINNED_SCREENSHOT);
+    useHudStore.getState().addScreenshot(PINNED_SCREENSHOT);
     useHudStore.getState().setInstructions('  use React  ');
     const { result } = renderHook(() => useAnalyzeScreenshot(), { wrapper: wrapperWithContainer(container) });
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useHudStore } from '@/ui/store/hud.store';
+import { useHudStore, MAX_SCREENSHOTS } from '@/ui/store/hud.store';
 import { useAnalyzeScreenshot } from '@/ui/hooks/useAnalyzeScreenshot';
 import { useApiKeySettings } from '@/ui/hooks/useApiKeySettings';
 import { AGENT_LIST, resolveAgent } from '@/core/domain/agents-catalog';
@@ -7,7 +7,7 @@ import { AgentSwitch } from './AgentSwitch';
 import { LanguageSelect } from './LanguageSelect';
 import { MessageList } from './MessageList';
 import { PromptInput } from './PromptInput';
-import { ScreenshotPreview } from './ScreenshotPreview';
+import { ScreenshotStrip } from './ScreenshotStrip';
 import { SettingsPanel } from './SettingsPanel';
 
 /**
@@ -18,7 +18,7 @@ export function Hud() {
   const streaming = useHudStore((s) => s.streaming);
   const answer = useHudStore((s) => s.answer);
   const error = useHudStore((s) => s.error);
-  const screenshot = useHudStore((s) => s.screenshot);
+  const screenshots = useHudStore((s) => s.screenshots);
   const hotkeyError = useHudStore((s) => s.hotkeyError);
   const agentId = useHudStore((s) => s.agentId);
   const language = useHudStore((s) => s.language);
@@ -27,6 +27,8 @@ export function Hud() {
   const setAgentId = useHudStore((s) => s.setAgentId);
   const setLanguage = useHudStore((s) => s.setLanguage);
   const setInstructions = useHudStore((s) => s.setInstructions);
+  const removeScreenshot = useHudStore((s) => s.removeScreenshot);
+  const clearScreenshots = useHudStore((s) => s.clearScreenshots);
   const analyze = useAnalyzeScreenshot();
   const apiKey = useApiKeySettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -95,7 +97,12 @@ export function Hud() {
           <LanguageSelect value={language} disabled={streaming} onChange={setLanguage} />
         )}
       </div>
-      <ScreenshotPreview screenshot={screenshot} />
+      <ScreenshotStrip
+        screenshots={screenshots}
+        max={MAX_SCREENSHOTS}
+        onRemove={removeScreenshot}
+        onClear={clearScreenshots}
+      />
       {/* Shows that the current answer used an extra hint, not just the screenshot. */}
       {activeHint && (
         <div className="mb-3 flex items-start gap-2 rounded-md border border-indigo-700/50 bg-indigo-950/40 px-3 py-2 text-xs text-indigo-200">

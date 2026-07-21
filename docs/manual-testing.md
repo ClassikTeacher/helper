@@ -33,10 +33,12 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 
 - [ ] With no key configured yet, the HUD shows an amber "No OpenRouter API key configured — click ⚙ to add one" banner
 - [ ] Entering a key in the ⚙ settings panel and saving shows "Key configured ✓"; the banner disappears after reopening/re-reading status
-- [ ] Pressing the screenshot hotkey (`Ctrl+Alt+S` by default — `Shift+S` is often claimed by screenshot tools; override via `VITE_SCREENSHOT_ACCELERATOR`) captures, shows the HUD, **and automatically streams an analysis** — no need to type a question first (main scenario, plan.md §4)
+- [ ] Pressing the CAPTURE hotkey (`Ctrl+Alt+S` by default — `Shift+S` is often claimed by screenshot tools; override via `VITE_CAPTURE_ACCELERATOR`) captures a screenshot, shows the HUD, and adds it to the batch strip — it does **NOT** analyze yet (phase 8, decoupled capture/send)
+- [ ] Pressing CAPTURE 1–5 times stacks thumbnails in the strip with a "N/5" counter; a 6th press does not add a 6th (cap); individual "✕" removes a shot, "Очистить всё" clears the batch
+- [ ] Pressing the SEND hotkey (`Ctrl+Alt+Enter` by default; override via `VITE_SEND_ACCELERATOR`) — or clicking Run — analyzes the whole staged batch at once and **streams an analysis** (main scenario, plan.md §4); the now-visible HUD itself never shows up in the analyzed images (content-protected)
 - [ ] Tokens stream progressively into the HUD (not all at once)
-- [ ] A follow-up question typed in the prompt box re-analyzes the **same** pinned screenshot (check: no second capture, and the now-visible HUD itself never shows up in the analyzed image)
-- [ ] Typing a question with no screenshot pinned yet (HUD opened via the toggle hotkey) shows "No screenshot yet — press the screenshot hotkey first." instead of silently capturing
+- [ ] Pressing SEND / Run with an empty batch shows "Нет скриншотов для анализа — сделайте хотя бы один (хоткей захвата)." instead of silently capturing
+- [ ] Works for BOTH agents: repeat capture→send with Solve and with Review selected in the HUD
 - [ ] Missing/invalid API key surfaces a readable error in the HUD (no silent failure)
 - [ ] If an error arrives mid-stream (e.g. kill network), any partial answer already streamed stays visible alongside the error ("Interrupted: …"), not replaced by it
 - [ ] **Security:** with devtools open on the webview, confirm the API key never appears in memory/network of the renderer process (only `secret_get`/`secret_set` IPC calls touch it, never the OpenRouter request itself)

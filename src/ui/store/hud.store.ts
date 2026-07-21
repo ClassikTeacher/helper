@@ -5,6 +5,13 @@ import { DEFAULT_AGENT_ID } from '@/core/domain/agents-catalog';
 import { DEFAULT_LANGUAGE, type ProgrammingLanguage } from '@/core/domain/language';
 
 /**
+ * Max screenshots the user can stage in one batch (phase 8). Capping keeps the
+ * multimodal request bounded (each image inflates input tokens/cost) and the
+ * preview strip readable.
+ */
+export const MAX_SCREENSHOTS = 5;
+
+/**
  * UI-only state for the HUD (Zustand). No business logic, no domain data beyond
  * what the view needs to render. Domain results arrive from use-cases.
  *
@@ -19,20 +26,24 @@ interface HudState {
   readonly streaming: boolean;
   readonly answer: string;
   readonly error: string | null;
-  /** Latest captured screenshot to preview in the HUD (phase 1). */
-  readonly screenshot: Screenshot | null;
+  /**
+   * Staged screenshots to send as ONE batch (phase 8). The capture hotkey
+   * appends (up to `MAX_SCREENSHOTS`); the send hotkey analyzes the whole
+   * buffer at once. Was a single `screenshot` before phase 8.
+   */
+  readonly screenshots: readonly Screenshot[];
   /** Set when the global hotkey failed to register (e.g. taken by another app). */
   readonly hotkeyError: string | null;
   /** Selected agent/mode (solver or reviewer). */
   readonly agentId: AgentId;
   /** Selected language hint for the solver (ignored by the reviewer). */
   readonly language: ProgrammingLanguage;
-  /** Short instructions typed in the input box, sent alongside the screenshot. */
+  /** Short instructions typed in the input box, sent alongside the screenshots. */
   readonly instructions: string;
   /**
    * The hint actually applied to the current/last analysis (empty when none).
    * Distinct from `instructions` (the live input): the input is cleared after
-   * each run so a hint never silently sticks to the next screenshot, while this
+   * each run so a hint never silently sticks to the next batch, while this
    * stays set so the UI can show that the answer used an extra hint.
    */
   readonly activeHint: string;
@@ -43,7 +54,12 @@ interface HudState {
   appendAnswer(delta: string): void;
   finishStreaming(): void;
   fail(message: string): void;
-  setScreenshot(screenshot: Screenshot): void;
+  /** Append a screenshot to the batch (no-op once `MAX_SCREENSHOTS` is reached). */
+  addScreenshot(screenshot: Screenshot): void;
+  /** Drop the screenshot at `index` from the batch. */
+  removeScreenshot(index: number): void;
+  /** Empty the screenshot batch. */
+  clearScreenshots(): void;
   setHotkeyError(message: string | null): void;
   setAgentId(agentId: AgentId): void;
   setLanguage(language: ProgrammingLanguage): void;
@@ -57,7 +73,7 @@ export const useHudStore = create<HudState>((set) => ({
   streaming: false,
   answer: '',
   error: null,
-  screenshot: null,
+  screenshots: [],
   hotkeyError: null,
   agentId: DEFAULT_AGENT_ID,
   language: DEFAULT_LANGUAGE,
@@ -70,11 +86,21 @@ export const useHudStore = create<HudState>((set) => ({
   appendAnswer: (delta) => set((s) => ({ answer: s.answer + delta })),
   finishStreaming: () => set({ streaming: false }),
   fail: (message) => set({ streaming: false, error: message }),
-  setScreenshot: (screenshot) => set({ screenshot, error: null }),
+  addScreenshot: (screenshot) =>
+    set((s) =>
+      // Cap the batch: ignore extra captures past the limit rather than
+      // dropping the oldest — the "N/MAX" counter tells the user it's full.
+      s.screenshots.length >= MAX_SCREENSHOTS
+        ? s
+        : { screenshots: [...s.screenshots, screenshot], error: null },
+    ),
+  removeScreenshot: (index) =>
+    set((s) => ({ screenshots: s.screenshots.filter((_, i) => i !== index) })),
+  clearScreenshots: () => set({ screenshots: [] }),
   setHotkeyError: (message) => set({ hotkeyError: message }),
   setAgentId: (agentId) => set({ agentId }),
   setLanguage: (language) => set({ language }),
   setInstructions: (instructions) => set({ instructions }),
   setActiveHint: (hint) => set({ activeHint: hint }),
-  reset: () => set({ streaming: false, answer: '', error: null, screenshot: null, activeHint: '' }),
+  reset: () => set({ streaming: false, answer: '', error: null, screenshots: [], activeHint: '' }),
 }));

@@ -45,7 +45,7 @@ describe('AgentRunner.analyzeScreen', () => {
     const captureSpy = vi.spyOn(screenCapture, 'capture');
     const runner = new AgentRunner({ screenCapture, llm: new FakeLlmAdapter('ok') });
 
-    await drain(runner.analyzeScreen(solverParams({ screenshot: PINNED_SCREENSHOT })));
+    await drain(runner.analyzeScreen(solverParams({ screenshots: [PINNED_SCREENSHOT] })));
 
     expect(captureSpy).not.toHaveBeenCalled();
   });
@@ -58,13 +58,30 @@ describe('AgentRunner.analyzeScreen', () => {
       llm,
     });
 
-    await drain(runner.analyzeScreen(solverParams({ screenshot: PINNED_SCREENSHOT })));
+    await drain(runner.analyzeScreen(solverParams({ screenshots: [PINNED_SCREENSHOT] })));
 
     const request = streamSpy.mock.calls[0]?.[0];
     const imagePart = request?.messages
       .flatMap((m) => m.parts)
       .find((p) => p.kind === 'image');
     expect(imagePart).toEqual({ kind: 'image', imageBase64: PINNED_SCREENSHOT.imageBase64 });
+  });
+
+  it('sends one image part per staged screenshot, in capture order, before the text', async () => {
+    // Phase 8: the whole batch is analyzed as one unit — each shot becomes its
+    // own image content part, in order, ahead of the accompanying text.
+    const first: Screenshot = { imageBase64: 'first', width: 1, height: 1, capturedAt: 1 };
+    const second: Screenshot = { imageBase64: 'second', width: 1, height: 1, capturedAt: 2 };
+    const llm = new FakeLlmAdapter('ok');
+    const streamSpy = vi.spyOn(llm, 'stream');
+    const runner = new AgentRunner({ screenCapture: new FakeScreenCaptureAdapter(), llm });
+
+    await drain(runner.analyzeScreen(solverParams({ screenshots: [first, second] })));
+
+    const parts = streamSpy.mock.calls[0]?.[0].messages.find((m) => m.role === 'user')?.parts ?? [];
+    expect(parts.map((p) => p.kind)).toEqual(['image', 'image', 'text']);
+    expect(parts[0]).toEqual({ kind: 'image', imageBase64: 'first' });
+    expect(parts[1]).toEqual({ kind: 'image', imageBase64: 'second' });
   });
 
   it('sends the agent system prompt and mixes the language + instructions into the user text', async () => {
@@ -74,7 +91,7 @@ describe('AgentRunner.analyzeScreen', () => {
 
     await drain(
       runner.analyzeScreen(
-        solverParams({ language: 'ts', instructions: 'use React', screenshot: PINNED_SCREENSHOT }),
+        solverParams({ language: 'ts', instructions: 'use React', screenshots: [PINNED_SCREENSHOT] }),
       ),
     );
 

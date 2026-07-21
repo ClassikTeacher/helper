@@ -10,10 +10,10 @@ export interface AnalyzeAndStreamParams {
   readonly agent: Agent;
   /** Language hint for the solver; ignored by agents that don't need one. */
   readonly language: ProgrammingLanguage;
-  /** Short instructions typed alongside the screenshot (may be empty). */
+  /** Short instructions typed alongside the screenshots (may be empty). */
   readonly instructions: string;
-  /** Reuse a pinned screenshot instead of letting the use-case capture a fresh one. */
-  readonly screenshot?: Screenshot;
+  /** The staged screenshot batch to analyze (phase 8); empty/omitted → the use-case captures one fresh. */
+  readonly screenshots?: readonly Screenshot[];
 }
 
 /**
