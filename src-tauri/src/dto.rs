@@ -149,6 +149,19 @@ pub struct SecretSetRequest {
     pub value: String,
 }
 
+// --- Audio → STT (secure-native, phase 9) ----------------------------------
+// The webview toggles recording via `audio_start_capture`/`audio_stop_capture`
+// (no payload) and, at send time, calls `transcribe_audio` which returns this.
+// The recorded audio itself never crosses the seam — only the text. Mirror of
+// `TranscribeResultDto` in dto.ts.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscribeResult {
+    /// Recognized transcript (may be empty if nothing was captured).
+    pub text: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

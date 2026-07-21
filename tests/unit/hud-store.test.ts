@@ -64,3 +64,51 @@ describe('hud.store screenshot batch (phase 8)', () => {
     expect(useHudStore.getState().screenshots).toEqual([]);
   });
 });
+
+describe('hud.store audio recording (phase 9)', () => {
+  it('setRecording toggles the recording flag', () => {
+    useHudStore.getState().setRecording(true);
+    expect(useHudStore.getState().recording).toBe(true);
+    useHudStore.getState().setRecording(false);
+    expect(useHudStore.getState().recording).toBe(false);
+  });
+
+  it('startTranscribing stops recording, shows the spinner, and clears prior transcript/error', () => {
+    useHudStore.setState({ recording: true, transcript: 'old', error: 'boom' });
+    useHudStore.getState().startTranscribing();
+
+    const s = useHudStore.getState();
+    expect(s.recording).toBe(false);
+    expect(s.transcribing).toBe(true);
+    expect(s.transcript).toBe('');
+    expect(s.error).toBeNull();
+  });
+
+  it('setTranscript stores the text and clears the transcribing spinner', () => {
+    useHudStore.setState({ transcribing: true });
+    useHudStore.getState().setTranscript('привет');
+
+    expect(useHudStore.getState().transcript).toBe('привет');
+    expect(useHudStore.getState().transcribing).toBe(false);
+  });
+
+  it('fail clears the recording + transcribing indicators (a failed STT must not leave them on)', () => {
+    useHudStore.setState({ recording: true, transcribing: true });
+    useHudStore.getState().fail('stt exploded');
+
+    const s = useHudStore.getState();
+    expect(s.recording).toBe(false);
+    expect(s.transcribing).toBe(false);
+    expect(s.error).toBe('stt exploded');
+  });
+
+  it('reset clears recording/transcribing/transcript', () => {
+    useHudStore.setState({ recording: true, transcribing: true, transcript: 'x' });
+    useHudStore.getState().reset();
+
+    const s = useHudStore.getState();
+    expect(s.recording).toBe(false);
+    expect(s.transcribing).toBe(false);
+    expect(s.transcript).toBe('');
+  });
+});

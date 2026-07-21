@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useHudStore, MAX_SCREENSHOTS } from '@/ui/store/hud.store';
 import { useAnalyzeScreenshot } from '@/ui/hooks/useAnalyzeScreenshot';
+import { useToggleRecording } from '@/ui/hooks/useToggleRecording';
 import { useApiKeySettings } from '@/ui/hooks/useApiKeySettings';
 import { AGENT_LIST, resolveAgent } from '@/core/domain/agents-catalog';
 import { AgentSwitch } from './AgentSwitch';
+import { AudioControls } from './AudioControls';
 import { LanguageSelect } from './LanguageSelect';
 import { MessageList } from './MessageList';
 import { PromptInput } from './PromptInput';
@@ -24,12 +26,16 @@ export function Hud() {
   const language = useHudStore((s) => s.language);
   const instructions = useHudStore((s) => s.instructions);
   const activeHint = useHudStore((s) => s.activeHint);
+  const recording = useHudStore((s) => s.recording);
+  const transcribing = useHudStore((s) => s.transcribing);
+  const transcript = useHudStore((s) => s.transcript);
   const setAgentId = useHudStore((s) => s.setAgentId);
   const setLanguage = useHudStore((s) => s.setLanguage);
   const setInstructions = useHudStore((s) => s.setInstructions);
   const removeScreenshot = useHudStore((s) => s.removeScreenshot);
   const clearScreenshots = useHudStore((s) => s.clearScreenshots);
   const analyze = useAnalyzeScreenshot();
+  const toggleRecording = useToggleRecording();
   const apiKey = useApiKeySettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -102,6 +108,13 @@ export function Hud() {
         max={MAX_SCREENSHOTS}
         onRemove={removeScreenshot}
         onClear={clearScreenshots}
+      />
+      <AudioControls
+        recording={recording}
+        transcribing={transcribing}
+        transcript={transcript}
+        onToggle={toggleRecording}
+        disabled={streaming || transcribing}
       />
       {/* Shows that the current answer used an extra hint, not just the screenshot. */}
       {activeHint && (

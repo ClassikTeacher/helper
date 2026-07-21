@@ -1,6 +1,7 @@
 //! IPC command handlers — the thin adapter layer. They pull services from
 //! managed state (DI) and delegate. Names must match `IPC_COMMANDS` in TS.
 
+pub mod audio;
 pub mod capture;
 pub mod llm;
 pub mod ocr;

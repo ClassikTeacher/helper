@@ -11,7 +11,9 @@ pub mod services;
 use tauri::Manager;
 
 use infra::openrouter_client::OpenRouterClient;
-use ports::{OcrEngine, SecretStore};
+use infra::stt_client::SttClient;
+use infra::wasapi_loopback::WasapiLoopbackRecorder;
+use ports::{AudioRecorder, OcrEngine, SecretStore};
 use services::capture_service::CaptureService;
 
 /// Application state injected into command handlers via `tauri::State`.
@@ -25,6 +27,13 @@ pub struct AppState {
     /// tests in `infra::openrouter_client::tests` (architecture.md §6: traits
     /// only when a fake is actually needed).
     pub llm: OpenRouterClient,
+    /// Loopback audio recorder (phase 9). Behind a trait so tests/non-Windows
+    /// can swap it; the real impl is WASAPI-only.
+    pub audio: Box<dyn AudioRecorder>,
+    /// STT client (phase 9) — same rationale as `llm` for having no fake trait:
+    /// its logic (multipart shape, response parse) is pure and unit-tested in
+    /// `infra::stt_client::tests`.
+    pub stt: SttClient,
 }
 
 impl AppState {
@@ -35,6 +44,8 @@ impl AppState {
             ocr: Box::new(infra::ort_ocr::OrtOcr::new()),
             secrets: Box::new(infra::keyring_secrets::KeyringSecrets::new()),
             llm: OpenRouterClient::new(),
+            audio: Box::new(WasapiLoopbackRecorder::new()),
+            stt: SttClient::new(),
         }
     }
 }
@@ -71,6 +82,9 @@ pub fn run() {
             commands::llm::llm_stream,
             commands::secrets::secret_get,
             commands::secrets::secret_set,
+            commands::audio::audio_start_capture,
+            commands::audio::audio_stop_capture,
+            commands::audio::transcribe_audio,
             commands::overlay_show,
             commands::overlay_hide,
             commands::overlay_toggle,

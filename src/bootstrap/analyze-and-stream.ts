@@ -27,18 +27,25 @@ export interface AnalyzeAndStreamParams {
  */
 export async function analyzeAndStream(
   useCases: Pick<AppContainer['useCases'], 'analyzeScreenshot'> &
-    Partial<Pick<AppContainer['useCases'], 'recordConversation'>>,
+    Partial<Pick<AppContainer['useCases'], 'recordConversation' | 'transcribeAudio'>>,
   params: AnalyzeAndStreamParams,
 ): Promise<void> {
-  useHudStore.getState().startStreaming();
-
-  // Record the hint actually applied to this run so the UI can show it while
-  // the answer streams. This is a display-only copy; the request already
-  // carries `params.instructions`, so it doesn't affect what's sent.
-  useHudStore.getState().setActiveHint(params.instructions.trim());
-
   try {
-    for await (const delta of useCases.analyzeScreenshot.execute(params)) {
+    // If loopback recording is active (phase 9), stop it and transcribe BEFORE
+    // streaming so the "transcribing…" spinner shows first and the transcript
+    // rides along in the same request as the screenshots. An STT failure throws
+    // here and is surfaced via `fail` — it does NOT get swallowed or silently
+    // drop the audio context.
+    const transcript = await collectTranscript(useCases);
+
+    useHudStore.getState().startStreaming();
+
+    // Record the hint actually applied to this run so the UI can show it while
+    // the answer streams. This is a display-only copy; the request already
+    // carries `params.instructions`, so it doesn't affect what's sent.
+    useHudStore.getState().setActiveHint(params.instructions.trim());
+
+    for await (const delta of useCases.analyzeScreenshot.execute({ ...params, transcript })) {
       useHudStore.getState().appendAnswer(delta);
     }
     useHudStore.getState().finishStreaming();
@@ -64,4 +71,29 @@ export async function analyzeAndStream(
   } catch (err) {
     useHudStore.getState().fail(err instanceof Error ? err.message : String(err));
   }
+}
+
+/**
+ * If loopback recording is active, stop it and return the transcript; otherwise
+ * return an empty string. Drives the `transcribing` spinner via the store. A
+ * transcription failure is thrown to the caller (surfaced via `fail`) rather
+ * than swallowed — the user should know the audio context was lost.
+ */
+async function collectTranscript(
+  useCases: Partial<Pick<AppContainer['useCases'], 'transcribeAudio'>>,
+): Promise<string> {
+  const store = useHudStore.getState();
+  if (!store.recording || !useCases.transcribeAudio) {
+    // No audio this run: clear any transcript left over from a previous send so
+    // the HUD preview doesn't imply audio is attached to THIS answer when it
+    // isn't (the request below carries no transcript).
+    if (store.transcript) store.setTranscript('');
+    return '';
+  }
+
+  await useCases.transcribeAudio.stopRecording();
+  useHudStore.getState().startTranscribing();
+  const transcript = await useCases.transcribeAudio.transcribe();
+  useHudStore.getState().setTranscript(transcript);
+  return transcript;
 }

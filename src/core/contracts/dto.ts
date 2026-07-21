@@ -108,3 +108,12 @@ export interface SecretSetRequestDto {
   readonly key: string;
   readonly value: string;
 }
+
+// --- Audio → STT (secure-native, phase 9) ----------------------------------
+// `audioStartCapture`/`audioStopCapture` take no payload. `transcribeAudio`
+// returns this. The recorded audio stays in native; only the text crosses the
+// seam. Mirror of `TranscribeResult` in dto.rs.
+export interface TranscribeResultDto {
+  /** Recognized transcript (may be empty if nothing was captured). */
+  readonly text: string;
+}

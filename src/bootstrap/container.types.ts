@@ -3,6 +3,8 @@ import type { CaptureScreenshotUseCase } from '@/core/application/use-cases/capt
 import type { SendPromptUseCase } from '@/core/application/use-cases/send-prompt.use-case';
 import type { ManageApiKeyUseCase } from '@/core/application/use-cases/manage-api-key.use-case';
 import type { RecordConversationUseCase } from '@/core/application/use-cases/record-conversation.use-case';
+import type { TranscribeAudioUseCase } from '@/core/application/use-cases/transcribe-audio.use-case';
+import type { AudioTranscriptionPort } from '@/core/application/ports/audio-transcription.port';
 import type { OverlayPort } from '@/core/application/ports/overlay.port';
 import type { HotkeyPort } from '@/core/application/ports/hotkey.port';
 import type { LlmPort } from '@/core/application/ports/llm.port';
@@ -23,6 +25,8 @@ export interface AppContainer {
     readonly sendPrompt: SendPromptUseCase;
     readonly manageApiKey: ManageApiKeyUseCase;
     readonly recordConversation: RecordConversationUseCase;
+    /** Loopback recording + cloud STT (phase 9). */
+    readonly transcribeAudio: TranscribeAudioUseCase;
   };
   readonly platform: {
     readonly overlay: OverlayPort;
@@ -43,4 +47,5 @@ export interface ContainerOverrides {
   readonly secrets?: SecretsPort;
   readonly storage?: StoragePort;
   readonly conversationRepository?: ConversationRepository;
+  readonly audio?: AudioTranscriptionPort;
 }

@@ -47,6 +47,12 @@ interface HudState {
    * stays set so the UI can show that the answer used an extra hint.
    */
   readonly activeHint: string;
+  /** True while loopback audio is being captured (phase 9). */
+  readonly recording: boolean;
+  /** True while the captured audio is being transcribed (phase 9). */
+  readonly transcribing: boolean;
+  /** The transcript applied to the current/last analysis (empty when none). */
+  readonly transcript: string;
 
   open(): void;
   close(): void;
@@ -65,6 +71,12 @@ interface HudState {
   setLanguage(language: ProgrammingLanguage): void;
   setInstructions(instructions: string): void;
   setActiveHint(hint: string): void;
+  /** Set the recording flag (record hotkey/button toggle). */
+  setRecording(recording: boolean): void;
+  /** Enter the transcribing state: recording stops, spinner shows, prior transcript cleared. */
+  startTranscribing(): void;
+  /** Store the finished transcript and clear the transcribing spinner. */
+  setTranscript(transcript: string): void;
   reset(): void;
 }
 
@@ -79,13 +91,20 @@ export const useHudStore = create<HudState>((set) => ({
   language: DEFAULT_LANGUAGE,
   instructions: '',
   activeHint: '',
+  recording: false,
+  transcribing: false,
+  transcript: '',
 
   open: () => set({ visible: true }),
   close: () => set({ visible: false }),
   startStreaming: () => set({ streaming: true, answer: '', error: null, visible: true }),
   appendAnswer: (delta) => set((s) => ({ answer: s.answer + delta })),
   finishStreaming: () => set({ streaming: false }),
-  fail: (message) => set({ streaming: false, error: message }),
+  // Any terminal failure also clears the recording/transcribing flags — a failed
+  // STT call (or a failed analyze after transcription) must not leave the "●
+  // запись"/"расшифровка…" indicators stuck on when nothing is actually running.
+  fail: (message) =>
+    set({ streaming: false, recording: false, transcribing: false, error: message }),
   addScreenshot: (screenshot) =>
     set((s) =>
       // Cap the batch: ignore extra captures past the limit rather than
@@ -102,5 +121,18 @@ export const useHudStore = create<HudState>((set) => ({
   setLanguage: (language) => set({ language }),
   setInstructions: (instructions) => set({ instructions }),
   setActiveHint: (hint) => set({ activeHint: hint }),
-  reset: () => set({ streaming: false, answer: '', error: null, screenshots: [], activeHint: '' }),
+  setRecording: (recording) => set({ recording }),
+  startTranscribing: () => set({ recording: false, transcribing: true, transcript: '', error: null }),
+  setTranscript: (transcript) => set({ transcript, transcribing: false }),
+  reset: () =>
+    set({
+      streaming: false,
+      answer: '',
+      error: null,
+      screenshots: [],
+      activeHint: '',
+      recording: false,
+      transcribing: false,
+      transcript: '',
+    }),
 }));

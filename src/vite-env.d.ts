@@ -11,6 +11,8 @@ interface ImportMetaEnv {
   readonly VITE_CAPTURE_ACCELERATOR?: string;
   /** Send-batch-for-analysis hotkey (phase 8). */
   readonly VITE_SEND_ACCELERATOR?: string;
+  /** Toggle-loopback-recording hotkey (phase 9). */
+  readonly VITE_RECORD_ACCELERATOR?: string;
 }
 
 interface ImportMeta {

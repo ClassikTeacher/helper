@@ -40,9 +40,18 @@ keyring = { version = "3", features = ["windows-native"] }
 
 # reqwest+SSE (phase 2 / spike 0.5): secure-native LLM streaming, see
 # spike_llm_stream.rs and native/llm in plan.md. rustls-tls avoids depending
-# on a system OpenSSL install on Windows.
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+# on a system OpenSSL install on Windows. `multipart` (phase 9): the STT
+# transcription call uploads the recorded WAV as multipart/form-data.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "multipart"] }
 futures-util = "0.3"
+
+# wasapi (phase 9): WASAPI loopback capture of the OUTPUT device (interlocutor's
+# voice) for cloud STT. cpal was the original plan but has NO Windows loopback
+# support (PR #339 added then removed; cpal 0.18.1 still lacks it), so we use the
+# purpose-built `wasapi` crate — loopback is first-class there. Windows-only
+# crate; this app is Windows-first (same as keyring's windows-native backend).
+# See decisions.md ADR #14 phase-9 de-risk notes and spike 9.0.
+wasapi = "0.23"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
@@ -54,6 +63,10 @@ path = "examples/spike_scap.rs"
 [[example]]
 name = "spike_llm_stream"
 path = "examples/spike_llm_stream.rs"
+
+[[example]]
+name = "spike_audio_loopback"
+path = "examples/spike_audio_loopback.rs"
 
 # scap 0.1.0-beta.1 (and 0.0.8) fail to compile on Windows against the
 # currently published windows-capture 1.5.0 (upstream API drift, unfixed on

@@ -49,6 +49,24 @@ describe('useAnalyzeScreenshot', () => {
     expect(useHudStore.getState().answer).toBe('');
   });
 
+  it('clears a stale transcript preview when sending without an active recording (phase 9)', async () => {
+    // A transcript left over from a previous (audio) send must not linger in the
+    // HUD preview implying it is attached to THIS answer — this run carries none.
+    const container = createContainer({
+      llm: new FakeLlmAdapter('ok'),
+      screenCapture: new FakeScreenCaptureAdapter(),
+    });
+    useHudStore.getState().addScreenshot(PINNED_SCREENSHOT);
+    useHudStore.setState({ transcript: 'stale from a prior run', recording: false });
+    const { result } = renderHook(() => useAnalyzeScreenshot(), { wrapper: wrapperWithContainer(container) });
+
+    await act(async () => {
+      await result.current();
+    });
+
+    expect(useHudStore.getState().transcript).toBe('');
+  });
+
   it('streams the analysis of the pinned screenshot into the store', async () => {
     const container = createContainer({
       llm: new FakeLlmAdapter('hello from fake'),

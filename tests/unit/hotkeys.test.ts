@@ -5,15 +5,19 @@ import {
   TOGGLE_HUD_ACCELERATOR,
   CAPTURE_ACCELERATOR,
   SEND_ACCELERATOR,
+  RECORD_ACCELERATOR,
 } from '@/bootstrap/hotkeys';
 import { CaptureScreenshotUseCase } from '@/core/application/use-cases/capture-screenshot.use-case';
 import { AnalyzeScreenshotUseCase } from '@/core/application/use-cases/analyze-screenshot.use-case';
+import { TranscribeAudioUseCase } from '@/core/application/use-cases/transcribe-audio.use-case';
 import { AgentRunner } from '@/core/application/services/agent-runner';
 import { FakeScreenCaptureAdapter } from '@/infrastructure/mocks/fake-screen-capture.adapter';
+import { FakeAudioAdapter } from '@/infrastructure/mocks/fake-audio.adapter';
 import { FakeLlmAdapter } from '@/infrastructure/mocks/fake-llm.adapter';
 import { useHudStore, MAX_SCREENSHOTS } from '@/ui/store/hud.store';
 import type { HotkeyHandler, HotkeyPort } from '@/core/application/ports/hotkey.port';
 import type { OverlayPort } from '@/core/application/ports/overlay.port';
+import type { AudioTranscriptionPort } from '@/core/application/ports/audio-transcription.port';
 import type { AppContainer } from '@/bootstrap/container.types';
 
 /** Builds a real (fake-adapter-backed) AnalyzeScreenshotUseCase for the container fixture. */
@@ -74,10 +78,11 @@ function createContainer(
   overlay: OverlayPort,
   captureScreenshot = new CaptureScreenshotUseCase(new FakeScreenCaptureAdapter()),
   analyzeScreenshot = createAnalyzeScreenshot(),
+  transcribeAudio = new TranscribeAudioUseCase(new FakeAudioAdapter()),
 ): Pick<AppContainer, 'platform' | 'useCases'> {
   return {
     platform: { hotkey, overlay },
-    useCases: { captureScreenshot, analyzeScreenshot } as AppContainer['useCases'],
+    useCases: { captureScreenshot, analyzeScreenshot, transcribeAudio } as AppContainer['useCases'],
   };
 }
 
@@ -85,11 +90,20 @@ function createContainer(
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 beforeEach(() => {
-  useHudStore.setState({ visible: false, screenshots: [], error: null, answer: '', streaming: false });
+  useHudStore.setState({
+    visible: false,
+    screenshots: [],
+    error: null,
+    answer: '',
+    streaming: false,
+    recording: false,
+    transcribing: false,
+    transcript: '',
+  });
 });
 
 describe('registerHotkeys', () => {
-  it('registers the toggle, capture, and send accelerators', async () => {
+  it('registers the toggle, capture, send, and record accelerators', async () => {
     const hotkey = new FakeHotkeyPort();
     const overlay = createFakeOverlay();
 
@@ -99,7 +113,122 @@ describe('registerHotkeys', () => {
       TOGGLE_HUD_ACCELERATOR,
       CAPTURE_ACCELERATOR,
       SEND_ACCELERATOR,
+      RECORD_ACCELERATOR,
     ]);
+  });
+
+  it('record hotkey starts recording, then a second press stops and SENDS (stop = finished question)', async () => {
+    const hotkey = new FakeHotkeyPort();
+    const overlay = createFakeOverlay();
+    const audio = new FakeAudioAdapter('привет из аудио');
+    const transcribeAudio = new TranscribeAudioUseCase(audio);
+    const analyzeScreenshot = createAnalyzeScreenshot();
+    const analyzeSpy = vi.spyOn(analyzeScreenshot, 'execute');
+
+    await registerHotkeys(
+      createContainer(hotkey, overlay, undefined, analyzeScreenshot, transcribeAudio),
+    );
+
+    // Stage a shot, then start recording — no analysis yet.
+    hotkey.press(CAPTURE_ACCELERATOR);
+    await flush();
+    hotkey.press(RECORD_ACCELERATOR);
+    await flush();
+    expect(useHudStore.getState().recording).toBe(true);
+    expect(audio.recording).toBe(true);
+    expect(analyzeSpy).not.toHaveBeenCalled();
+
+    // Second press = stop = send: the recorder is stopped, the audio transcribed
+    // and attached, the answer streamed, and the recording flag cleared.
+    hotkey.press(RECORD_ACCELERATOR);
+    await flush();
+    expect(audio.recording).toBe(false);
+    expect(useHudStore.getState().recording).toBe(false);
+    expect(analyzeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ transcript: 'привет из аудио' }),
+    );
+    expect(useHudStore.getState().answer).toContain('fake answer');
+  });
+
+  it('stop = send works with no staged screenshots (audio-only, fresh-capture fallback)', async () => {
+    const hotkey = new FakeHotkeyPort();
+    const overlay = createFakeOverlay();
+    const transcribeAudio = new TranscribeAudioUseCase(new FakeAudioAdapter('только голос'));
+    const analyzeScreenshot = createAnalyzeScreenshot();
+    const analyzeSpy = vi.spyOn(analyzeScreenshot, 'execute');
+
+    await registerHotkeys(
+      createContainer(hotkey, overlay, undefined, analyzeScreenshot, transcribeAudio),
+    );
+
+    hotkey.press(RECORD_ACCELERATOR); // start (nothing staged)
+    await flush();
+    hotkey.press(RECORD_ACCELERATOR); // stop = send
+    await flush();
+
+    // No "Нет скриншотов" error: while recording, an empty batch is allowed and
+    // the runner falls back to a single fresh capture.
+    expect(analyzeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ transcript: 'только голос' }),
+    );
+    expect(useHudStore.getState().error).toBeNull();
+    expect(useHudStore.getState().answer).toContain('fake answer');
+  });
+
+  it('send hotkey attaches the transcript when recording is active', async () => {
+    const hotkey = new FakeHotkeyPort();
+    const overlay = createFakeOverlay();
+    const analyzeScreenshot = createAnalyzeScreenshot();
+    const analyzeSpy = vi.spyOn(analyzeScreenshot, 'execute');
+    const transcribeAudio = new TranscribeAudioUseCase(new FakeAudioAdapter('привет из аудио'));
+
+    await registerHotkeys(
+      createContainer(hotkey, overlay, undefined, analyzeScreenshot, transcribeAudio),
+    );
+    hotkey.press(CAPTURE_ACCELERATOR);
+    await flush();
+    hotkey.press(RECORD_ACCELERATOR);
+    await flush();
+    hotkey.press(SEND_ACCELERATOR);
+    await flush();
+
+    // The transcript rides along in the analyze params, and recording is cleared.
+    expect(analyzeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ transcript: 'привет из аудио' }),
+    );
+    expect(useHudStore.getState().transcript).toBe('привет из аудио');
+    expect(useHudStore.getState().recording).toBe(false);
+  });
+
+  it('surfaces an STT failure on send and does not analyze', async () => {
+    const hotkey = new FakeHotkeyPort();
+    const overlay = createFakeOverlay();
+    const analyzeScreenshot = createAnalyzeScreenshot();
+    const analyzeSpy = vi.spyOn(analyzeScreenshot, 'execute');
+    // A transcribe that rejects — the audio context is lost, and the user must
+    // be told rather than have it silently swallowed.
+    const failingAudio: AudioTranscriptionPort = {
+      startRecording: async () => {},
+      stopRecording: async () => {},
+      transcribe: async () => {
+        throw new Error('stt provider down');
+      },
+    };
+    const transcribeAudio = new TranscribeAudioUseCase(failingAudio);
+
+    await registerHotkeys(
+      createContainer(hotkey, overlay, undefined, analyzeScreenshot, transcribeAudio),
+    );
+    hotkey.press(CAPTURE_ACCELERATOR);
+    await flush();
+    hotkey.press(RECORD_ACCELERATOR);
+    await flush();
+    hotkey.press(SEND_ACCELERATOR);
+    await flush();
+
+    expect(useHudStore.getState().error).toBe('stt provider down');
+    expect(useHudStore.getState().transcribing).toBe(false);
+    expect(analyzeSpy).not.toHaveBeenCalled();
   });
 
   it('toggle hotkey flips overlay visibility and never captures', async () => {
@@ -276,7 +405,7 @@ describe('registerHotkeys', () => {
 });
 
 describe('unregisterHotkeys', () => {
-  it('unregisters all three accelerators', async () => {
+  it('unregisters all four accelerators', async () => {
     const hotkey = new FakeHotkeyPort();
     const overlay = createFakeOverlay();
 
@@ -286,6 +415,7 @@ describe('unregisterHotkeys', () => {
       TOGGLE_HUD_ACCELERATOR,
       CAPTURE_ACCELERATOR,
       SEND_ACCELERATOR,
+      RECORD_ACCELERATOR,
     ]);
   });
 });

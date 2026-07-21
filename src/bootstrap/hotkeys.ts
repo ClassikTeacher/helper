@@ -1,13 +1,13 @@
 import { useHudStore, MAX_SCREENSHOTS } from '@/ui/store/hud.store';
-import { analyzeAndStream } from './analyze-and-stream';
-import { resolveAgent } from '@/core/domain/agents-catalog';
+import { sendBatch } from './send-batch';
+import { toggleRecording } from './toggle-recording';
 import type { AppContainer } from './container.types';
 
 /** The bootstrap slice the hotkey wiring needs: the capture use-case + overlay. */
 type HotkeysContainer = Pick<AppContainer, 'platform' | 'useCases'>;
 
 /**
- * Three distinct global hotkeys. Overridable via `VITE_*` env vars
+ * Four distinct global hotkeys. Overridable via `VITE_*` env vars
  * (see `.env.example`) for easy tuning during early development; not exposed
  * as an in-app setting yet — see tasks.md backlog "Настраиваемый хоткей".
  */
@@ -32,6 +32,13 @@ export const CAPTURE_ACCELERATOR =
  */
 export const SEND_ACCELERATOR =
   import.meta.env.VITE_SEND_ACCELERATOR || 'CommandOrControl+Alt+Enter';
+/**
+ * Toggle loopback audio recording (phase 9) — captures the output device (the
+ * interlocutor's voice). The captured audio is transcribed and attached to the
+ * batch when `SEND_ACCELERATOR` fires. Override via `VITE_RECORD_ACCELERATOR`.
+ */
+export const RECORD_ACCELERATOR =
+  import.meta.env.VITE_RECORD_ACCELERATOR || 'CommandOrControl+Alt+L';
 
 /**
  * Toggle the HUD's visibility. Delegates to `overlay.toggle()`, which flips
@@ -78,31 +85,14 @@ async function captureToBuffer(container: HotkeysContainer): Promise<void> {
 }
 
 /**
- * Send the staged screenshot batch for analysis — the app's main scenario
- * (plan.md §4: hotkey -> screenshots -> analyze -> stream), now decoupled from
- * capture (phase 8). Runs whatever agent/language/instructions the user
- * currently has selected in the HUD (read at send time). If the batch is empty,
- * surfaces a clear error instead of silently capturing — the user is expected
- * to stage at least one shot first with `CAPTURE_ACCELERATOR`.
+ * Toggle loopback audio recording (phase 9) and show the HUD. The toggle logic
+ * is shared with the record button (`toggle-recording.ts`) — here we additionally
+ * surface the HUD first so the user sees the "● запись" indicator (on start) or
+ * the streaming answer (on stop = send, phase-9 "stop = finished question").
  */
-async function sendBuffer(container: HotkeysContainer): Promise<void> {
-  const { overlay } = container.platform;
-  await overlay.show();
-
-  const { screenshots, agentId, language, instructions } = useHudStore.getState();
-  if (screenshots.length === 0) {
-    useHudStore
-      .getState()
-      .fail('Нет скриншотов для анализа — сделайте хотя бы один (хоткей захвата).');
-    return;
-  }
-
-  await analyzeAndStream(container.useCases, {
-    agent: resolveAgent(agentId),
-    language,
-    instructions,
-    screenshots,
-  });
+async function toggleRecordingHotkey(container: HotkeysContainer): Promise<void> {
+  await container.platform.overlay.show();
+  await toggleRecording(container.useCases);
 }
 
 /**
@@ -111,7 +101,7 @@ async function sendBuffer(container: HotkeysContainer): Promise<void> {
  * and `OverlayPort` (architecture.md §8: platform ports are wired by bootstrap,
  * never by UI components).
  *
- * The three hotkeys are registered independently (`allSettled`) so a conflict
+ * The four hotkeys are registered independently (`allSettled`) so a conflict
  * on one accelerator (e.g. already taken by another app) does not prevent the
  * others from registering. If any registration fails, the aggregated error is
  * rethrown so the caller can surface it (`ServicesProvider` shows the HUD with
@@ -128,7 +118,10 @@ export async function registerHotkeys(container: HotkeysContainer): Promise<void
       void captureToBuffer(container);
     }),
     hotkey.register(SEND_ACCELERATOR, () => {
-      void sendBuffer(container);
+      void sendBatch(container);
+    }),
+    hotkey.register(RECORD_ACCELERATOR, () => {
+      void toggleRecordingHotkey(container);
     }),
   ]);
 
@@ -149,5 +142,6 @@ export async function unregisterHotkeys(
     hotkey.unregister(TOGGLE_HUD_ACCELERATOR),
     hotkey.unregister(CAPTURE_ACCELERATOR),
     hotkey.unregister(SEND_ACCELERATOR),
+    hotkey.unregister(RECORD_ACCELERATOR),
   ]);
 }

@@ -16,6 +16,16 @@ export const IPC_COMMANDS = {
   llmStream: 'llm_stream',
   secretGet: 'secret_get',
   secretSet: 'secret_set',
+  /**
+   * Audio → STT (phase 9). `audioStartCapture`/`audioStopCapture` toggle native
+   * WASAPI loopback recording (no payload); `transcribeAudio` drains the buffer,
+   * uploads it to the STT endpoint, and returns a `TranscribeResultDto`. The
+   * recorded audio never enters the renderer — only the transcript. Secure-native,
+   * same shape as `llmStream`.
+   */
+  audioStartCapture: 'audio_start_capture',
+  audioStopCapture: 'audio_stop_capture',
+  transcribeAudio: 'transcribe_audio',
   overlayShow: 'overlay_show',
   overlayHide: 'overlay_hide',
   /** Toggles based on the window's real OS-level visibility (native is the source of truth). */

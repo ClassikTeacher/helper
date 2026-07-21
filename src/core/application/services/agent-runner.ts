@@ -17,6 +17,11 @@ export interface AnalyzeScreenParams {
   readonly language: ProgrammingLanguage;
   /** Short free-text hints from the input box (may be empty). */
   readonly instructions: string;
+  /**
+   * Transcript of the interlocutor's speech (loopback STT, phase 9). Sent as a
+   * labeled data block in the user text alongside the screenshots. May be empty.
+   */
+  readonly transcript?: string;
   readonly signal?: AbortSignal;
   /**
    * The staged screenshot batch to analyze as one unit (phase 8). The capture
@@ -57,6 +62,7 @@ export class AgentRunner {
       agent: params.agent,
       language: params.language,
       instructions: params.instructions,
+      ...(params.transcript ? { transcript: params.transcript } : {}),
     });
 
     const messages: LlmMessage[] = [
