@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Screenshot } from '@/core/domain/screenshot';
+import type { LlmUsage } from '@/core/application/ports/llm.port';
 import type { AgentId } from '@/core/domain/agent';
 import { DEFAULT_AGENT_ID } from '@/core/domain/agents-catalog';
 import { DEFAULT_LANGUAGE, type ProgrammingLanguage } from '@/core/domain/language';
@@ -53,6 +54,11 @@ interface HudState {
   readonly transcribing: boolean;
   /** The transcript applied to the current/last analysis (empty when none). */
   readonly transcript: string;
+  /**
+   * Token/cost accounting of the last finished answer, when the provider
+   * reported it (agents-improvement.md R9). Cleared when a new stream starts.
+   */
+  readonly usage: LlmUsage | null;
 
   open(): void;
   close(): void;
@@ -77,6 +83,8 @@ interface HudState {
   startTranscribing(): void;
   /** Store the finished transcript and clear the transcribing spinner. */
   setTranscript(transcript: string): void;
+  /** Store the finished answer's token/cost accounting. */
+  setUsage(usage: LlmUsage): void;
   reset(): void;
 }
 
@@ -94,10 +102,12 @@ export const useHudStore = create<HudState>((set) => ({
   recording: false,
   transcribing: false,
   transcript: '',
+  usage: null,
 
   open: () => set({ visible: true }),
   close: () => set({ visible: false }),
-  startStreaming: () => set({ streaming: true, answer: '', error: null, visible: true }),
+  startStreaming: () =>
+    set({ streaming: true, answer: '', error: null, usage: null, visible: true }),
   appendAnswer: (delta) => set((s) => ({ answer: s.answer + delta })),
   finishStreaming: () => set({ streaming: false }),
   // Any terminal failure also clears the recording/transcribing flags — a failed
@@ -124,6 +134,7 @@ export const useHudStore = create<HudState>((set) => ({
   setRecording: (recording) => set({ recording }),
   startTranscribing: () => set({ recording: false, transcribing: true, transcript: '', error: null }),
   setTranscript: (transcript) => set({ transcript, transcribing: false }),
+  setUsage: (usage) => set({ usage }),
   reset: () =>
     set({
       streaming: false,
@@ -134,5 +145,6 @@ export const useHudStore = create<HudState>((set) => ({
       recording: false,
       transcribing: false,
       transcript: '',
+      usage: null,
     }),
 }));

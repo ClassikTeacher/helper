@@ -45,7 +45,12 @@ export async function analyzeAndStream(
     // carries `params.instructions`, so it doesn't affect what's sent.
     useHudStore.getState().setActiveHint(params.instructions.trim());
 
-    for await (const delta of useCases.analyzeScreenshot.execute({ ...params, transcript })) {
+    for await (const delta of useCases.analyzeScreenshot.execute({
+      ...params,
+      transcript,
+      // Surface the provider's token/cost accounting in the HUD (R9).
+      onUsage: (usage) => useHudStore.getState().setUsage(usage),
+    })) {
       useHudStore.getState().appendAnswer(delta);
     }
     useHudStore.getState().finishStreaming();

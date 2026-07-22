@@ -105,6 +105,11 @@ pub struct LlmStreamRequest {
 pub struct LlmUsage {
     pub input_tokens: u32,
     pub output_tokens: u32,
+    /// Request cost in USD, when the provider reports it (OpenRouter does with
+    /// `usage: {include: true}`). Optional & additive — absent on providers
+    /// that don't account cost. Mirrors `LlmUsageDto.cost` in dto.ts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<f64>,
 }
 
 /// Discriminated union streamed over `Channel<LlmChunk>`; terminal chunk is

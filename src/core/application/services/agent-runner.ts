@@ -1,5 +1,5 @@
 import type { ScreenCapturePort } from '@/core/application/ports/screen-capture.port';
-import type { LlmPort, LlmMessage, LlmContentPart } from '@/core/application/ports/llm.port';
+import type { LlmPort, LlmMessage, LlmContentPart, LlmUsage } from '@/core/application/ports/llm.port';
 import type { Agent } from '@/core/domain/agent';
 import type { ProgrammingLanguage } from '@/core/domain/language';
 import type { Screenshot } from '@/core/domain/screenshot';
@@ -23,6 +23,14 @@ export interface AnalyzeScreenParams {
    */
   readonly transcript?: string;
   readonly signal?: AbortSignal;
+  /**
+   * Called once with the provider's token/cost accounting when the stream
+   * finishes and the provider reported it (usage observability — see
+   * agents-improvement.md R9). Optional: callers that don't display usage
+   * simply omit it. Kept as a callback because the generator's yield type
+   * stays a plain text delta for the UI.
+   */
+  readonly onUsage?: (usage: LlmUsage) => void;
   /**
    * The staged screenshot batch to analyze as one unit (phase 8). The capture
    * hotkey (`bootstrap/hotkeys.ts`) appends each shot to `hud.store.screenshots`
@@ -87,7 +95,9 @@ export class AgentRunner {
     })) {
       if (chunk.type === 'text-delta') yield chunk.delta;
       else if (chunk.type === 'error') throw new Error(chunk.message);
-      // 'finish' carries reason/usage — nothing to emit to the text stream.
+      // 'finish' emits nothing to the text stream; its usage (when the
+      // provider reported one) is surfaced via the optional callback.
+      else if (chunk.usage) params.onUsage?.(chunk.usage);
     }
   }
 }

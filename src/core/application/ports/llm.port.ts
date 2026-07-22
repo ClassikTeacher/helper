@@ -31,6 +31,8 @@ export interface LlmStreamRequest {
 export interface LlmUsage {
   readonly inputTokens: number;
   readonly outputTokens: number;
+  /** Request cost in USD, when the provider reports it (OpenRouter does). */
+  readonly cost?: number;
 }
 
 /** Incremental text token(s). */

@@ -106,6 +106,21 @@ describe('AgentRunner.analyzeScreen', () => {
     expect(userText?.kind === 'text' && userText.text).toContain('use React');
   });
 
+  it('forwards the finish-chunk usage to the onUsage callback (R9)', async () => {
+    // FakeLlmAdapter reports usage on its terminal finish chunk; the runner
+    // must hand it to the optional callback instead of swallowing it.
+    const onUsage = vi.fn();
+    const runner = new AgentRunner({
+      screenCapture: new FakeScreenCaptureAdapter(),
+      llm: new FakeLlmAdapter('two words'),
+    });
+
+    await drain(runner.analyzeScreen(solverParams({ onUsage })));
+
+    expect(onUsage).toHaveBeenCalledTimes(1);
+    expect(onUsage).toHaveBeenCalledWith({ inputTokens: 0, outputTokens: 2 });
+  });
+
   it("does not choose a model — that is the resilient LLM layer's job", async () => {
     // AgentRunner no longer selects a model; it leaves `model` unset and the
     // ResilientLlm decorator fills it per attempt.

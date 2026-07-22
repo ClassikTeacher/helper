@@ -15,6 +15,16 @@ use crate::dto::{LlmChunk, LlmContentPart, LlmMessage, LlmRole, LlmStreamRequest
 
 const OPENROUTER_CHAT_COMPLETIONS_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
+/// Low temperature: both agents produce code/technical answers, where sampling
+/// variance only adds rambling and format drift (provider defaults are ~1.0).
+///
+/// Deliberately NO `max_tokens` cap: a cap silently truncates long answers
+/// (`finish_reason: "length"`), and a truncated solution is worse than an
+/// expensive one — answers must always be complete (user decision 2026-07-22,
+/// review of R5). Length is bounded by the concise-style system prompts
+/// instead.
+const LLM_TEMPERATURE: f64 = 0.3;
+
 pub struct OpenRouterClient {
     http: reqwest::Client,
 }
@@ -142,6 +152,7 @@ fn build_request_body(request: &LlmStreamRequest) -> Value {
     json!({
         "model": request.model,
         "stream": true,
+        "temperature": LLM_TEMPERATURE,
         "usage": { "include": true },
         "messages": request.messages.iter().map(to_openai_message).collect::<Vec<_>>(),
     })
@@ -266,6 +277,7 @@ fn parse_data_json(data: &str) -> SseOutcome {
         let usage = value.get("usage").filter(|u| !u.is_null()).map(|u| LlmUsage {
             input_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as u32,
             output_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as u32,
+            cost: u.get("cost").and_then(Value::as_f64),
         });
         return SseOutcome::Chunk(LlmChunk::Finish {
             reason: reason.to_string(),
@@ -383,7 +395,7 @@ mod tests {
 
     #[test]
     fn parse_sse_event_extracts_finish_with_usage() {
-        let event = r#"data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":34}}"#;
+        let event = r#"data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":34,"cost":0.0021}}"#;
         assert_eq!(
             parse_sse_event(event),
             SseOutcome::Chunk(LlmChunk::Finish {
@@ -391,6 +403,7 @@ mod tests {
                 usage: Some(LlmUsage {
                     input_tokens: 12,
                     output_tokens: 34,
+                    cost: Some(0.0021),
                 }),
             })
         );
@@ -433,6 +446,10 @@ mod tests {
         let body = build_request_body(&request);
         assert_eq!(body["model"], "openai/gpt-4o-mini");
         assert_eq!(body["stream"], true);
+        assert_eq!(body["temperature"], 0.2);
+        // No max_tokens: answers must never be truncated (user decision
+        // 2026-07-22) — the key must be absent, not merely large.
+        assert!(body.get("max_tokens").is_none());
         assert_eq!(body["usage"]["include"], true);
         assert_eq!(body["messages"][0]["role"], "user");
         assert_eq!(body["messages"][0]["content"][0]["type"], "text");

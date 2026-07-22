@@ -29,6 +29,7 @@ export function Hud() {
   const recording = useHudStore((s) => s.recording);
   const transcribing = useHudStore((s) => s.transcribing);
   const transcript = useHudStore((s) => s.transcript);
+  const usage = useHudStore((s) => s.usage);
   const setAgentId = useHudStore((s) => s.setAgentId);
   const setLanguage = useHudStore((s) => s.setLanguage);
   const setInstructions = useHudStore((s) => s.setInstructions);
@@ -126,6 +127,13 @@ export function Hud() {
       <div className="mb-3 max-h-[320px] overflow-y-auto">
         <MessageList answer={answer} streaming={streaming} error={error} />
       </div>
+      {/* Token/cost accounting of the finished answer (R9 observability). */}
+      {usage && !streaming && (
+        <div className="mb-3 text-right text-[10px] text-neutral-500">
+          {usage.inputTokens}&rarr;{usage.outputTokens} tok
+          {usage.cost != null && ` · $${usage.cost.toFixed(4)}`}
+        </div>
+      )}
       <PromptInput
         value={instructions}
         disabled={streaming}

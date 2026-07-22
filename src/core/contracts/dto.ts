@@ -87,6 +87,8 @@ export interface LlmStreamRequestDto {
 export interface LlmUsageDto {
   readonly inputTokens: number;
   readonly outputTokens: number;
+  /** Request cost in USD, when the provider reports it. Mirrors `LlmUsage.cost` in dto.rs. */
+  readonly cost?: number;
 }
 
 /** Discriminated union streamed over the Channel; terminal chunk is finish|error. */
