@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Screenshot } from '@/core/domain/screenshot';
 import type { AgentId } from '@/core/domain/agent';
+import type { ConversationTurn, RunStatus } from '@/core/application/services/agent-runner';
 import { DEFAULT_AGENT_ID } from '@/core/domain/agents-catalog';
 import { DEFAULT_LANGUAGE, type ProgrammingLanguage } from '@/core/domain/language';
 
@@ -84,6 +85,14 @@ interface HudState {
   readonly lastRun: RunInfo | null;
   /** True when the current answer was stopped by the user (partial answer kept). */
   readonly stopped: boolean;
+  /**
+   * The current conversation thread (P1 item 9): the last analysis and any
+   * follow-ups, as text, so a follow-up question can refer to them. A new
+   * analysis starts a new thread; null before the first answer.
+   */
+  readonly thread: { readonly agentId: AgentId; readonly turns: readonly ConversationTurn[] } | null;
+  /** Progress before the first token (e.g. reading the screen); null otherwise. */
+  readonly phase: RunStatus | null;
 
   open(): void;
   close(): void;
@@ -120,6 +129,8 @@ interface HudState {
   setTranscript(transcript: string): void;
   setCodeText(codeText: string): void;
   setLastRun(info: RunInfo | null): void;
+  setThread(thread: HudState['thread']): void;
+  setPhase(phase: RunStatus | null): void;
   reset(): void;
 }
 
@@ -142,14 +153,24 @@ export const useHudStore = create<HudState>((set) => ({
   codeText: '',
   lastRun: null,
   stopped: false,
+  thread: null,
+  phase: null,
 
   open: () => set({ visible: true }),
   close: () => set({ visible: false }),
   startStreaming: () =>
-    set({ streaming: true, answer: '', error: null, visible: true, lastRun: null, stopped: false }),
-  appendAnswer: (delta) => set((s) => ({ answer: s.answer + delta })),
-  finishStreaming: () => set({ streaming: false }),
-  stopStreaming: () => set({ streaming: false, transcribing: false, stopped: true }),
+    set({
+      streaming: true,
+      answer: '',
+      error: null,
+      visible: true,
+      lastRun: null,
+      stopped: false,
+      phase: null,
+    }),
+  appendAnswer: (delta) => set((s) => ({ answer: s.answer + delta, phase: null })),
+  finishStreaming: () => set({ streaming: false, phase: null }),
+  stopStreaming: () => set({ streaming: false, transcribing: false, stopped: true, phase: null }),
   // Any terminal failure also clears the recording/transcribing flags — a failed
   // STT call (or a failed analyze after transcription) must not leave the "●
   // запись"/"расшифровка…" indicators stuck on when nothing is actually running.
@@ -159,6 +180,7 @@ export const useHudStore = create<HudState>((set) => ({
       recording: false,
       recordingStartedAt: null,
       transcribing: false,
+      phase: null,
       error: message,
     }),
   setError: (message) => set({ error: message }),
@@ -187,6 +209,8 @@ export const useHudStore = create<HudState>((set) => ({
   setTranscript: (transcript) => set({ transcript, transcribing: false }),
   setCodeText: (codeText) => set({ codeText }),
   setLastRun: (lastRun) => set({ lastRun }),
+  setThread: (thread) => set({ thread }),
+  setPhase: (phase) => set({ phase }),
   reset: () =>
     set({
       streaming: false,
@@ -201,5 +225,7 @@ export const useHudStore = create<HudState>((set) => ({
       codeText: '',
       lastRun: null,
       stopped: false,
+      thread: null,
+      phase: null,
     }),
 }));

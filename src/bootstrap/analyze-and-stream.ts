@@ -1,9 +1,11 @@
-import { useHudStore } from '@/ui/store/hud.store';
+import { useHudStore, type RunInfo } from '@/ui/store/hud.store';
 import { summarizeInvocation } from '@/core/application/services/agent-prompt';
 import type { AppContainer } from './container.types';
 import type { Agent } from '@/core/domain/agent';
 import type { ProgrammingLanguage } from '@/core/domain/language';
 import type { Screenshot } from '@/core/domain/screenshot';
+import type { LlmFinish } from '@/core/application/ports/llm.port';
+import type { ConversationTurn } from '@/core/application/services/agent-runner';
 import { abortReason, beginRun, endRun } from './run-control';
 
 export interface AnalyzeAndStreamParams {
@@ -19,6 +21,12 @@ export interface AnalyzeAndStreamParams {
   readonly codeText?: string;
 }
 
+type RunUseCases = Pick<AppContainer['useCases'], 'analyzeScreenshot'> &
+  Partial<Pick<AppContainer['useCases'], 'recordConversation' | 'transcribeAudio'>>;
+
+/** Keeps a follow-up thread bounded: the first turn (the task) + the latest ones. */
+export const MAX_THREAD_TURNS = 4;
+
 /**
  * Drives `AnalyzeScreenshotUseCase` and pipes its streamed deltas into the HUD
  * store. Deliberately a plain function, not a React hook — the hotkey wiring
@@ -27,47 +35,120 @@ export interface AnalyzeAndStreamParams {
  * §8: platform wiring lives in bootstrap, never in UI). Reading/writing the
  * Zustand store via `getState()` works the same inside or outside React, so
  * both callers share one implementation instead of two copies drifting apart.
+ *
+ * A successful analysis starts a NEW follow-up thread (P1 item 9).
  */
-export async function analyzeAndStream(
-  useCases: Pick<AppContainer['useCases'], 'analyzeScreenshot'> &
-    Partial<Pick<AppContainer['useCases'], 'recordConversation' | 'transcribeAudio'>>,
-  params: AnalyzeAndStreamParams,
-): Promise<void> {
-  // Exactly one active run (P0): starting this one aborts any run in flight.
-  const signal = beginRun();
-  try {
+export async function analyzeAndStream(useCases: RunUseCases, params: AnalyzeAndStreamParams): Promise<void> {
+  let userText = '';
+  await streamRun(useCases, {
+    hint: params.instructions.trim(),
     // If loopback recording is active (phase 9), stop it and transcribe BEFORE
     // streaming so the "transcribing…" spinner shows first and the transcript
     // rides along in the same request as the screenshots. An STT failure throws
-    // here and is surfaced via `fail` — it does NOT get swallowed or silently
-    // drop the audio context.
-    const transcript = await collectTranscript(useCases);
+    // here and is surfaced via `fail` — it does NOT get swallowed.
+    prepare: () => collectTranscript(useCases),
+    source: (transcript, hooks) =>
+      useCases.analyzeScreenshot.execute({
+        ...params,
+        transcript,
+        ...hooks,
+        onPrompt: (text) => {
+          userText = text;
+        },
+        onStatus: (status) => useHudStore.getState().setPhase(status),
+      }),
+    summary: summarizeInvocation(params),
+    onSuccess: (answer) => {
+      // Clear the live inputs only now that they have been successfully
+      // applied, so neither the hint nor the pasted code silently sticks to
+      // the NEXT batch (user decision 2026-07-04; R15). A FAILED run keeps
+      // them intact so the user can just hit Run again.
+      useHudStore.getState().setInstructions('');
+      // Only if it is still the code this run sent: the paste-code hotkey works
+      // while an answer streams, and code staged for the NEXT question must survive.
+      if (useHudStore.getState().codeText === (params.codeText ?? '')) {
+        useHudStore.getState().setCodeText('');
+      }
+      useHudStore.getState().setThread({ agentId: params.agent.id, turns: [{ userText, answer }] });
+    },
+  });
+}
+
+/**
+ * Asks a follow-up question on the current thread (P1 item 9) and streams the
+ * answer the same way as an analysis (one active run, Stop, run info). The
+ * question comes from the input box; the thread grows by one turn.
+ */
+export async function followUpAndStream(
+  useCases: RunUseCases,
+  params: { readonly agent: Agent; readonly question: string },
+): Promise<void> {
+  const thread = useHudStore.getState().thread;
+  const question = params.question.trim();
+  if (!thread || !question) return;
+  let userText = '';
+  await streamRun(useCases, {
+    hint: `↳ ${question}`,
+    prepare: async () => '',
+    source: (_transcript, hooks) =>
+      useCases.analyzeScreenshot.followUp({
+        agent: params.agent,
+        history: thread.turns,
+        question,
+        ...hooks,
+        onPrompt: (text) => {
+          userText = text;
+        },
+      }),
+    summary: `${params.agent.name} ↳ ${question}`,
+    onSuccess: (answer) => {
+      useHudStore.getState().setInstructions('');
+      useHudStore.getState().setThread({
+        agentId: thread.agentId,
+        turns: boundThread([...thread.turns, { userText, answer }]),
+      });
+    },
+  });
+}
+
+/** Keeps the first turn (it states the task) and the most recent ones. */
+function boundThread(turns: readonly ConversationTurn[]): ConversationTurn[] {
+  if (turns.length <= MAX_THREAD_TURNS) return [...turns];
+  return [turns[0]!, ...turns.slice(turns.length - (MAX_THREAD_TURNS - 1))];
+}
+
+interface RunSpec {
+  /** Shown in the HUD while the answer streams ("Hint" chip). */
+  readonly hint: string;
+  /** Work before streaming (e.g. STT); its result is handed to `source`. */
+  readonly prepare: () => Promise<string>;
+  readonly source: (
+    prepared: string,
+    hooks: { readonly signal: AbortSignal; readonly onFinish: (finish: LlmFinish) => void },
+  ) => AsyncIterable<string>;
+  /** Stored as the conversation's prompt in history. */
+  readonly summary: string;
+  readonly onSuccess: (answer: string) => void;
+}
+
+/**
+ * The shared run lifecycle: one active run (P0), stream into the HUD, report
+ * run info (R9/R19), wind down on Stop/supersede, persist on success.
+ */
+async function streamRun(useCases: RunUseCases, spec: RunSpec): Promise<void> {
+  // Exactly one active run (P0): starting this one aborts any run in flight.
+  const signal = beginRun();
+  try {
+    const prepared = await spec.prepare();
     if (signal.aborted) return settleAborted(signal);
 
     useHudStore.getState().startStreaming();
+    // Display-only copy of what was applied to this run.
+    useHudStore.getState().setActiveHint(spec.hint);
 
-    // Record the hint actually applied to this run so the UI can show it while
-    // the answer streams. This is a display-only copy; the request already
-    // carries `params.instructions`, so it doesn't affect what's sent.
-    useHudStore.getState().setActiveHint(params.instructions.trim());
-
-    for await (const delta of useCases.analyzeScreenshot.execute({
-      ...params,
-      transcript,
+    for await (const delta of spec.source(prepared, {
       signal,
-      onFinish: (finish) =>
-        useHudStore.getState().setLastRun({
-          ...(finish.model ? { model: finish.model } : {}),
-          fallback: finish.fallback ?? false,
-          reason: finish.reason,
-          ...(finish.usage
-            ? {
-                inputTokens: finish.usage.inputTokens,
-                outputTokens: finish.usage.outputTokens,
-                ...(finish.usage.cost !== undefined ? { cost: finish.usage.cost } : {}),
-              }
-            : {}),
-        }),
+      onFinish: (finish) => useHudStore.getState().setLastRun(toRunInfo(finish)),
     })) {
       useHudStore.getState().appendAnswer(delta);
     }
@@ -75,27 +156,14 @@ export async function analyzeAndStream(
     if (signal.aborted) return settleAborted(signal);
     useHudStore.getState().finishStreaming();
 
-    // Clear the live inputs only now that they have been successfully
-    // applied, so neither the hint nor the pasted code silently sticks to the
-    // NEXT batch (user decision 2026-07-04; R15). Deliberately NOT done before
-    // the run: a FAILED run keeps them intact so the user can just hit Run
-    // again (the request captured `params` already).
-    useHudStore.getState().setInstructions('');
-    // Only if it is still the code this run sent: the paste-code hotkey works
-    // while an answer streams, and code staged for the NEXT question must survive.
-    if (useHudStore.getState().codeText === (params.codeText ?? '')) {
-      useHudStore.getState().setCodeText('');
-    }
+    const answer = useHudStore.getState().answer;
+    spec.onSuccess(answer);
 
     // Persist the completed exchange (phase 4). Best-effort: a storage failure
-    // must NOT break the answer already streamed to the user, so it's caught
-    // and logged, never rethrown into the HUD. The stored "prompt" is a short
-    // summary of the invocation (agent + language + instructions) — the raw
-    // system prompt would be noise in a history list.
-    const answer = useHudStore.getState().answer;
+    // must NOT break the answer already streamed to the user.
     if (useCases.recordConversation && answer.trim()) {
       await useCases.recordConversation
-        .execute({ prompt: summarizeInvocation(params), answer })
+        .execute({ prompt: spec.summary, answer })
         .catch((err) => console.error('Failed to persist conversation', err));
     }
   } catch (err) {
@@ -104,6 +172,21 @@ export async function analyzeAndStream(
   } finally {
     endRun(signal);
   }
+}
+
+function toRunInfo(finish: LlmFinish): RunInfo {
+  return {
+    ...(finish.model ? { model: finish.model } : {}),
+    fallback: finish.fallback ?? false,
+    reason: finish.reason,
+    ...(finish.usage
+      ? {
+          inputTokens: finish.usage.inputTokens,
+          outputTokens: finish.usage.outputTokens,
+          ...(finish.usage.cost !== undefined ? { cost: finish.usage.cost } : {}),
+        }
+      : {}),
+  };
 }
 
 /**

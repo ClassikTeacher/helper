@@ -1,5 +1,5 @@
 import { useHudStore } from '@/ui/store/hud.store';
-import { analyzeAndStream } from './analyze-and-stream';
+import { analyzeAndStream, followUpAndStream } from './analyze-and-stream';
 import { resolveAgent } from '@/core/domain/agents-catalog';
 import type { AppContainer } from './container.types';
 
@@ -40,6 +40,17 @@ export async function runSend(useCases: AppContainer['useCases']): Promise<void>
     screenshots,
     ...(codeText.trim() ? { codeText } : {}),
   });
+}
+
+/**
+ * Ask a follow-up about the current answer (P1 item 9): the input box text is
+ * the question, the current thread is the context. No-op without a thread or
+ * a question, and while a previous send is still transcribing.
+ */
+export async function runFollowUp(useCases: AppContainer['useCases']): Promise<void> {
+  const { thread, instructions, transcribing } = useHudStore.getState();
+  if (transcribing || !thread || !instructions.trim()) return;
+  await followUpAndStream(useCases, { agent: resolveAgent(thread.agentId), question: instructions });
 }
 
 /**

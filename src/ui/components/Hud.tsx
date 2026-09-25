@@ -3,6 +3,7 @@ import { useHudStore, MAX_SCREENSHOTS } from '@/ui/store/hud.store';
 import { useAnalyzeScreenshot } from '@/ui/hooks/useAnalyzeScreenshot';
 import { useToggleRecording } from '@/ui/hooks/useToggleRecording';
 import { useStopRun } from '@/ui/hooks/useStopRun';
+import { useFollowUp } from '@/ui/hooks/useFollowUp';
 import { useElapsedSeconds } from '@/ui/hooks/useElapsedSeconds';
 import { useApiKeySettings } from '@/ui/hooks/useApiKeySettings';
 import { AGENT_LIST, resolveAgent } from '@/core/domain/agents-catalog';
@@ -36,6 +37,8 @@ export function Hud() {
   const codeText = useHudStore((s) => s.codeText);
   const lastRun = useHudStore((s) => s.lastRun);
   const stopped = useHudStore((s) => s.stopped);
+  const hasThread = useHudStore((s) => s.thread !== null);
+  const phase = useHudStore((s) => s.phase);
   const recordingStartedAt = useHudStore((s) => s.recordingStartedAt);
   const recordingWindowSecs = useHudStore((s) => s.recordingWindowSecs);
   const recordingElapsed = useElapsedSeconds(recordingStartedAt);
@@ -48,6 +51,7 @@ export function Hud() {
   const analyze = useAnalyzeScreenshot();
   const toggleRecording = useToggleRecording();
   const stop = useStopRun(streaming);
+  const followUp = useFollowUp();
   const apiKey = useApiKeySettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -83,7 +87,11 @@ export function Hud() {
           AI-Helper
         </span>
         <div className="flex items-center gap-3">
-          {streaming && <span className="text-xs text-indigo-400">streaming…</span>}
+          {streaming && (
+            <span className="text-xs text-indigo-400">
+              {phase === 'reading-screen' ? 'распознаю код…' : 'streaming…'}
+            </span>
+          )}
           {streaming && (
             <button
               type="button"
@@ -158,6 +166,8 @@ export function Hud() {
         disabled={streaming}
         onChange={setInstructions}
         onSubmit={analyze}
+        onFollowUp={followUp}
+        canFollowUp={hasThread}
       />
     </div>
   );
