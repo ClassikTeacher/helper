@@ -1,4 +1,8 @@
-import type { AgentRunner, AnalyzeScreenParams } from '@/core/application/services/agent-runner';
+import type {
+  AgentRunner,
+  AnalyzeScreenParams,
+  FollowUpParams,
+} from '@/core/application/services/agent-runner';
 
 /**
  * Use-case: analyze the current screen with a prompt and stream the answer.
@@ -9,5 +13,10 @@ export class AnalyzeScreenshotUseCase {
 
   execute(params: AnalyzeScreenParams): AsyncIterable<string> {
     return this.runner.analyzeScreen(params);
+  }
+
+  /** A follow-up question on the current thread (P1 item 9). */
+  followUp(params: FollowUpParams): AsyncIterable<string> {
+    return this.runner.followUp(params);
   }
 }

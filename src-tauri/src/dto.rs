@@ -21,6 +21,11 @@ pub struct CaptureRequest {
     pub region: Option<CaptureRegion>,
     #[serde(default)]
     pub display_index: Option<u32>,
+    /// Target display by OS device name (e.g. `\\.\DISPLAY2`). When neither
+    /// this nor `display_index` is given, `capture_screen` fills it with the
+    /// monitor under the mouse cursor — the screen the user is working on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +115,17 @@ pub struct LlmStreamRequest {
     /// request (R4/R17). `None` = send as captured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_image_edge: Option<u32>,
+    /// Client-generated id for `llm_cancel` (stop / superseded run). `None` =
+    /// not cancellable (older webviews, tests).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+}
+
+/// Payload of `llm_cancel`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmCancelRequest {
+    pub request_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -172,6 +188,14 @@ pub struct SecretSetRequest {
 // (no payload) and, at send time, calls `transcribe_audio` which returns this.
 // The recorded audio itself never crosses the seam — only the text. Mirror of
 // `TranscribeResultDto` in dto.ts.
+
+/// Result of `audio_start_capture`: the rolling window the recording keeps
+/// (the LAST `max_seconds`), so the HUD can tell the user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioStartResult {
+    pub max_seconds: u32,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

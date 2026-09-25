@@ -8,11 +8,44 @@ import type {
 import type { Agent } from '@/core/domain/agent';
 import type { ProgrammingLanguage } from '@/core/domain/language';
 import type { Screenshot } from '@/core/domain/screenshot';
-import { buildAgentPrompt } from './agent-prompt';
+import { buildAgentPrompt, buildFollowUpText } from './agent-prompt';
+import type { ScreenTranscriber } from './screen-transcriber';
 
 export interface AgentRunnerDeps {
   readonly screenCapture: ScreenCapturePort;
   readonly llm: LlmPort;
+  /** Optional screenshot → text pass (P1 item 7); applies per agent. */
+  readonly transcriber?: ScreenTranscriber;
+}
+
+/** Progress the UI may show before the first answer token. */
+export type RunStatus = 'reading-screen';
+
+/** One completed exchange, kept for follow-up questions (P1 item 9). */
+export interface ConversationTurn {
+  /** The user text actually sent (data blocks included). */
+  readonly userText: string;
+  /**
+   * Screenshots (base64) re-attached on follow-ups — ONLY when the task
+   * existed solely as pixels (no code text, no transcription); otherwise the
+   * text already carries it and the images would just cost tokens again.
+   */
+  readonly images?: readonly string[];
+  readonly answer: string;
+}
+
+/** What `onPrompt` reports: the user message a follow-up thread starts from. */
+export type SentPrompt = Omit<ConversationTurn, 'answer'>;
+
+export interface FollowUpParams {
+  readonly agent: Agent;
+  /** Earlier exchanges of this session, oldest first. */
+  readonly history: readonly ConversationTurn[];
+  /** The user's follow-up question. */
+  readonly question: string;
+  readonly onPrompt?: (sent: SentPrompt) => void;
+  readonly onFinish?: (finish: LlmFinish) => void;
+  readonly signal?: AbortSignal;
 }
 
 export interface AnalyzeScreenParams {
@@ -39,6 +72,10 @@ export interface AnalyzeScreenParams {
    * only carries deltas.
    */
   readonly onFinish?: (finish: LlmFinish) => void;
+  /** Receives the user message that was sent — the start of a follow-up thread. */
+  readonly onPrompt?: (sent: SentPrompt) => void;
+  /** Progress before streaming (e.g. the screen-transcription pass). */
+  readonly onStatus?: (status: RunStatus) => void;
   readonly signal?: AbortSignal;
   /**
    * The staged screenshot batch to analyze as one unit (phase 8). The capture
@@ -66,7 +103,7 @@ export class AgentRunner {
   constructor(private readonly deps: AgentRunnerDeps) {}
 
   async *analyzeScreen(params: AnalyzeScreenParams): AsyncIterable<string> {
-    const { screenCapture, llm } = this.deps;
+    const { screenCapture } = this.deps;
 
     // Analyze the staged batch; fall back to a single fresh capture when the
     // caller staged nothing (pre-phase-8 one-shot ergonomics — see the
@@ -79,13 +116,39 @@ export class AgentRunner {
           ? []
           : [await screenCapture.capture()];
 
+    // Optional transcription pass (P1 item 7): only when the user gave no
+    // text, there are screenshots, and the pass is enabled for this agent.
+    let transcribed = '';
+    const transcriber = this.deps.transcriber;
+    if (!hasCode && shots.length > 0 && transcriber?.appliesTo(params.agent.id)) {
+      params.onStatus?.('reading-screen');
+      try {
+        transcribed = await transcriber.transcribe(shots, params.signal);
+      } catch (err) {
+        // Optional pass: a failure degrades to screenshots only, never to no answer.
+        console.warn('Screen transcription failed; continuing with screenshots only', err);
+      }
+      if (params.signal?.aborted) return;
+    }
+
     const { system, userText } = buildAgentPrompt({
       agent: params.agent,
       language: params.language,
       instructions: params.instructions,
       ...(params.transcript ? { transcript: params.transcript } : {}),
-      ...(hasCode ? { codeText: params.codeText } : {}),
+      ...(hasCode && params.codeText
+        ? { codeText: params.codeText }
+        : transcribed
+          ? { codeText: transcribed, codeTextSource: 'transcribed' as const }
+          : {}),
       screenshotCount: shots.length,
+    });
+    params.onPrompt?.({
+      userText,
+      // The task lives only in the pixels → follow-ups must see them again.
+      ...(!hasCode && !transcribed && shots.length > 0
+        ? { images: shots.map((shot) => shot.imageBase64) }
+        : {}),
     });
 
     const messages: LlmMessage[] = [
@@ -104,12 +167,50 @@ export class AgentRunner {
       },
     ];
 
-    for await (const chunk of llm.stream({
+    yield* this.stream(params.agent, messages, params);
+  }
+
+  /**
+   * A follow-up question on the current thread (P1 item 9): system prompt,
+   * then the earlier exchanges, then the question. Screenshots are re-attached
+   * only for a turn whose task existed solely as pixels (see
+   * `ConversationTurn.images`); otherwise the text turns carry the task.
+   */
+  async *followUp(params: FollowUpParams): AsyncIterable<string> {
+    const userText = buildFollowUpText(params.question);
+    params.onPrompt?.({ userText });
+    const text = (t: string): LlmContentPart[] => [{ kind: 'text', text: t }];
+    const messages: LlmMessage[] = [
+      { role: 'system', parts: text(params.agent.systemPrompt) },
+      ...params.history.flatMap((turn): LlmMessage[] => [
+        {
+          role: 'user',
+          parts: [
+            ...(turn.images ?? []).map((imageBase64): LlmContentPart => ({ kind: 'image', imageBase64 })),
+            ...text(turn.userText),
+          ],
+        },
+        { role: 'assistant', parts: text(turn.answer) },
+      ]),
+      { role: 'user', parts: text(userText) },
+    ];
+    yield* this.stream(params.agent, messages, params);
+  }
+
+  private async *stream(
+    agent: Agent,
+    messages: LlmMessage[],
+    params: Pick<AnalyzeScreenParams, 'signal' | 'onFinish'>,
+  ): AsyncIterable<string> {
+    for await (const chunk of this.deps.llm.stream({
       // The agent declares its task weight; ResilientLlm resolves it (R11).
-      route: params.agent.modelRoute,
+      route: agent.modelRoute,
       messages,
       ...(params.signal ? { signal: params.signal } : {}),
     })) {
+      // Aborted (Stop / superseded): emit nothing more, even if the adapter
+      // still hands over an already-buffered chunk.
+      if (params.signal?.aborted) return;
       if (chunk.type === 'text-delta') yield chunk.delta;
       else if (chunk.type === 'error') throw new Error(chunk.message);
       // 'finish' carries reason/usage/model — reported out-of-band, not as text.

@@ -37,7 +37,15 @@ const VARIANTS = [
   { name: 'dark-16px', theme: 'github-dark-default', fontPx: 16 },
 ];
 
-const LANGS = { '.go': 'go', '.py': 'python', '.ts': 'typescript', '.js': 'javascript', '.sql': 'sql' };
+const LANGS = {
+  '.go': 'go',
+  '.py': 'python',
+  '.ts': 'typescript',
+  '.js': 'javascript',
+  '.sql': 'sql',
+  '.md': 'markdown',
+  '.txt': 'text',
+};
 
 async function launch() {
   const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
@@ -76,10 +84,14 @@ function pageHtml({ codeHtml, lineCount, firstLine, fileName, variant, dark }) {
   </body></html>`;
 }
 
-/** Splits source lines into consecutive frames that fit the editor height. */
-function frames(lines, variant) {
+/**
+ * Splits source lines into consecutive frames that fit the editor height, or
+ * at most `splitEvery` lines per frame when the case forces a multi-shot batch.
+ */
+function frames(lines, variant, splitEvery) {
   const lineHeight = Math.round(variant.fontPx * 1.3);
-  const perFrame = Math.floor((FRAME.height - 37 - 16) / lineHeight);
+  const fit = Math.floor((FRAME.height - 37 - 16) / lineHeight);
+  const perFrame = splitEvery ? Math.min(fit, splitEvery) : fit;
   if (lines.length <= perFrame) return [{ first: 1, lines }];
   const out = [];
   for (let start = 0; start < lines.length; start += perFrame - OVERLAP_LINES) {
@@ -126,7 +138,7 @@ async function renderCase(browser, caseId) {
     const dark = variant.theme.includes('dark');
     const full = [];
     const small = [];
-    for (const [i, frame] of frames(lines, variant).entries()) {
+    for (const [i, frame] of frames(lines, variant, meta.render?.splitEvery).entries()) {
       const codeHtml = await codeToHtml(frame.lines.join('\n'), { lang, theme: variant.theme });
       await page.setContent(
         pageHtml({

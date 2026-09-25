@@ -26,8 +26,13 @@ export interface CaptureRegionDto {
 export interface CaptureRequestDto {
   /** Optional sub-region; omit for full screen. */
   readonly region?: CaptureRegionDto;
-  /** Target display index; omit for primary. */
+  /** Target display index. */
   readonly displayIndex?: number;
+  /**
+   * Target display by OS device name. With neither this nor `displayIndex`,
+   * native captures the monitor under the mouse cursor (P0).
+   */
+  readonly displayName?: string;
 }
 
 export interface CaptureResultDto {
@@ -88,6 +93,12 @@ export interface LlmStreamRequestDto {
   readonly reasoningEffort?: string;
   /** Longest image edge in px; native downscales larger images before sending (R4/R17). */
   readonly maxImageEdge?: number;
+  /** Client-generated id so `llm_cancel` can stop this request. */
+  readonly requestId?: string;
+}
+
+export interface LlmCancelRequestDto {
+  readonly requestId: string;
 }
 
 export interface LlmUsageDto {
@@ -127,6 +138,11 @@ export interface SecretSetRequestDto {
 // `audioStartCapture`/`audioStopCapture` take no payload. `transcribeAudio`
 // returns this. The recorded audio stays in native; only the text crosses the
 // seam. Mirror of `TranscribeResult` in dto.rs.
+/** Result of `audioStartCapture`: the recording keeps only the LAST `maxSeconds`. */
+export interface AudioStartResultDto {
+  readonly maxSeconds: number;
+}
+
 export interface TranscribeResultDto {
   /** Recognized transcript (may be empty if nothing was captured). */
   readonly text: string;

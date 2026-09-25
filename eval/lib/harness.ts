@@ -2,12 +2,14 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { AgentRunner } from '@/core/application/services/agent-runner';
 import { ResilientLlm } from '@/core/application/services/resilient-llm';
+import { ScreenTranscriber } from '@/core/application/services/screen-transcriber';
+import { languageLabel, type ProgrammingLanguage } from '@/core/domain/language';
 import { AGENTS } from '@/core/domain/agents-catalog';
 import { MAX_IMAGE_EDGE_LIMIT, type RouteProfile } from '@/core/domain/model-route';
 import type { LlmFinish, LlmMessage, LlmPort } from '@/core/application/ports/llm.port';
 import type { Screenshot } from '@/core/domain/screenshot';
 import type { ScreenCapturePort } from '@/core/application/ports/screen-capture.port';
-import type { EvalConfig, InputMode, PromptVariant } from './config';
+import { armApplies, type EvalConfig, type InputMode, type PromptVariant } from './config';
 import { JUDGE_SYSTEM_PROMPT, buildJudgePrompt, parseJudgeVerdict } from './judge';
 import { OpenRouterFetchLlm } from './openrouter';
 import { buildMainSnapshotPrompt } from './prompts-main-2026-07-22';
@@ -104,16 +106,26 @@ export async function runArm(
   };
   const llm: LlmPort = new ResilientLlm(new OpenRouterFetchLlm(apiKey), { light: profile, heavy: profile });
   const withShots = arm.input !== 'text';
-  const withText = arm.input !== 'shot';
+  const withText = arm.input === 'text' || arm.input === 'text+shot';
+  const language = loaded.meta.language as ProgrammingLanguage;
   const started = Date.now();
   let text = '';
   let finish: LlmFinish | undefined;
 
   if (arm.prompt === 'current') {
-    const runner = new AgentRunner({ screenCapture: NO_CAPTURE, llm });
+    // `shot+ocr`: the production transcription pass (P1 item 7), on the arm's
+    // model unless EVAL_TRANSCRIBE_MODEL names a dedicated one.
+    const transcriber =
+      arm.input === 'shot+ocr'
+        ? new ScreenTranscriber(llm, {
+            agents: new Set([loaded.meta.agent]),
+            model: config.transcribeModel ?? arm.model,
+          })
+        : undefined;
+    const runner = new AgentRunner({ screenCapture: NO_CAPTURE, llm, ...(transcriber ? { transcriber } : {}) });
     for await (const delta of runner.analyzeScreen({
       agent: AGENTS[loaded.meta.agent],
-      language: 'all',
+      language,
       instructions: '',
       screenshots: withShots ? shots : [],
       ...(withText ? { codeText: loaded.source } : {}),
@@ -128,6 +140,7 @@ export async function runArm(
     // the hints field — exactly how the baseline "screenshot + text" run was made.
     const { system, userText } = buildMainSnapshotPrompt({
       agentId: loaded.meta.agent,
+      ...(language !== 'all' ? { languageLabel: languageLabel(language) } : {}),
       instructions: withText ? loaded.source : '',
     });
     const messages: LlmMessage[] = [
@@ -219,11 +232,11 @@ export async function runGrid(apiKey: string, config: EvalConfig): Promise<strin
 
   const tasks: (() => Promise<ScoredRun>)[] = [];
   for (const loaded of cases) {
-    const needsShots = config.inputs.some((i) => i !== 'text');
+    const needsShots = config.inputs.some((i) => i !== 'text' && armApplies(loaded.meta, 'current', i));
     const shots = needsShots ? await loadShots(loaded, config.shotVariant) : [];
     for (const prompt of config.prompts)
       for (const model of config.models)
-        for (const input of config.inputs)
+        for (const input of config.inputs.filter((i) => armApplies(loaded.meta, prompt, i)))
           for (let repeat = 1; repeat <= config.repeats; repeat++) {
             const arm: Arm = { prompt, model, input };
             tasks.push(async () => {

@@ -1,5 +1,5 @@
 import { useHudStore } from '@/ui/store/hud.store';
-import { analyzeAndStream } from './analyze-and-stream';
+import { analyzeAndStream, followUpAndStream } from './analyze-and-stream';
 import { resolveAgent } from '@/core/domain/agents-catalog';
 import type { AppContainer } from './container.types';
 
@@ -18,8 +18,12 @@ import type { AppContainer } from './container.types';
  * pasted code and no shots, the request is text-only.
  */
 export async function runSend(useCases: AppContainer['useCases']): Promise<void> {
-  const { screenshots, recording, agentId, language, instructions, codeText } =
+  const { screenshots, recording, transcribing, agentId, language, instructions, codeText } =
     useHudStore.getState();
+  // While the previous send is still transcribing, a new send is ignored: its
+  // audio is already being processed and would otherwise be lost (a send
+  // DURING streaming is fine — it supersedes the running answer, see run-control).
+  if (transcribing) return;
   if (screenshots.length === 0 && !recording && !codeText.trim()) {
     useHudStore
       .getState()
@@ -36,6 +40,17 @@ export async function runSend(useCases: AppContainer['useCases']): Promise<void>
     screenshots,
     ...(codeText.trim() ? { codeText } : {}),
   });
+}
+
+/**
+ * Ask a follow-up about the current answer (P1 item 9): the input box text is
+ * the question, the current thread is the context. No-op without a thread or
+ * a question, and while a previous send is still transcribing.
+ */
+export async function runFollowUp(useCases: AppContainer['useCases']): Promise<void> {
+  const { thread, instructions, transcribing } = useHudStore.getState();
+  if (transcribing || !thread || !instructions.trim()) return;
+  await followUpAndStream(useCases, { agent: resolveAgent(thread.agentId), question: instructions });
 }
 
 /**

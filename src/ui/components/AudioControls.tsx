@@ -4,6 +4,14 @@ interface AudioControlsProps {
   readonly transcript: string;
   readonly onToggle: () => void;
   readonly disabled?: boolean;
+  /** Seconds since the recording started (0 when not recording). */
+  readonly elapsedSecs?: number;
+  /** Rolling window: only the last this-many seconds are sent. */
+  readonly windowSecs?: number;
+}
+
+function clock(secs: number): string {
+  return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
 }
 
 /**
@@ -19,6 +27,8 @@ export function AudioControls({
   transcript,
   onToggle,
   disabled = false,
+  elapsedSecs = 0,
+  windowSecs = 60,
 }: AudioControlsProps) {
   return (
     <div className="mb-3">
@@ -40,7 +50,11 @@ export function AudioControls({
         {recording && (
           <span className="flex items-center gap-1 text-xs text-red-400">
             <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-red-500" />
-            запись…
+            запись {clock(elapsedSecs)}
+            {/* The window rolls: past it, the OLDEST audio is dropped (P0). */}
+            {elapsedSecs > windowSecs && (
+              <span className="text-amber-400">· в запрос уйдут последние {windowSecs} с</span>
+            )}
           </span>
         )}
         {transcribing && <span className="text-xs text-indigo-300">расшифровка…</span>}

@@ -226,6 +226,26 @@ describe('ResilientLlm routes and request profiles (R11/R16)', () => {
   });
 });
 
+describe('ResilientLlm cancellation (P0)', () => {
+  it('does not fail over when the caller aborted before any content', async () => {
+    const controller = new AbortController();
+    const attempts: string[] = [];
+    const inner: LlmPort = {
+      async *stream(request) {
+        attempts.push(request.model ?? '');
+        controller.abort(); // user pressed Stop while waiting for the first token
+        // An aborted adapter ends without a terminal chunk.
+        if (!controller.signal.aborted) yield { type: 'finish', reason: 'stop' };
+      },
+    };
+
+    const chunks = await collect(new ResilientLlm(inner, ['A', 'B']).stream({ messages: [], signal: controller.signal }));
+
+    expect(attempts).toEqual(['A']);
+    expect(chunks).toEqual([]);
+  });
+});
+
 describe('requestParamsFor', () => {
   it('omits an unset temperature and keeps the image edge', () => {
     expect(requestParamsFor({ chain: ['a'], maxImageEdge: 1568 })).toEqual({ maxImageEdge: 1568 });

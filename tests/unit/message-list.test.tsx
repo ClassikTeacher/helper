@@ -28,3 +28,18 @@ describe('MessageList', () => {
     expect(container.querySelector('.animate-pulse')).not.toBeNull();
   });
 });
+
+describe('MessageList stop note (P0)', () => {
+  it('shows "Остановлено." under a stopped partial answer', () => {
+    render(<MessageList answer="partial" streaming={false} error={null} stopped />);
+    expect(screen.getByText('Остановлено.')).toBeInTheDocument();
+  });
+});
+
+describe('MessageList stop before the first token', () => {
+  it('shows the stop note, not the idle placeholder', () => {
+    render(<MessageList answer="" streaming={false} error={null} stopped />);
+    expect(screen.getByText('Остановлено.')).toBeInTheDocument();
+    expect(screen.queryByText(/press the hotkey/i)).not.toBeInTheDocument();
+  });
+});

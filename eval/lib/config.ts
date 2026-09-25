@@ -5,7 +5,9 @@ import { REASONING_EFFORTS, type ReasoningEffort } from '@/core/domain/model-rou
  * harness runs the full cross product × `EVAL_REPEATS`.
  */
 
-export type InputMode = 'text' | 'shot' | 'text+shot';
+import type { EvalCase, InputMode } from './types';
+
+export type { InputMode };
 export type PromptVariant = 'current' | 'main-2026-07-22';
 
 export interface EvalConfig {
@@ -18,6 +20,8 @@ export interface EvalConfig {
   readonly repeats: number;
   readonly temperature?: number;
   readonly reasoningEffort?: ReasoningEffort;
+  /** Model for the `shot+ocr` transcription pass (default: the arm's model). */
+  readonly transcribeModel?: string;
   readonly judgeModel: string;
   /** Judge temperature; `undefined` = not sent (`EVAL_JUDGE_TEMPERATURE=off`). Default 0. */
   readonly judgeTemperature?: number;
@@ -27,7 +31,7 @@ export interface EvalConfig {
   readonly scoreDir?: string;
 }
 
-const INPUTS: readonly InputMode[] = ['text', 'shot', 'text+shot'];
+const INPUTS: readonly InputMode[] = ['text', 'shot', 'text+shot', 'shot+ocr'];
 const PROMPTS: readonly PromptVariant[] = ['current', 'main-2026-07-22'];
 
 function list(value: string | undefined): string[] | undefined {
@@ -81,10 +85,21 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): E
     repeats: positiveInt(env.EVAL_REPEATS, 3),
     ...(temperature === undefined ? { temperature: 0.3 } : temp !== undefined ? { temperature: temp } : {}),
     ...(reasoning && reasoning !== 'off' ? { reasoningEffort: reasoning as ReasoningEffort } : {}),
+    ...(env.EVAL_TRANSCRIBE_MODEL?.trim() ? { transcribeModel: env.EVAL_TRANSCRIBE_MODEL.trim() } : {}),
     judgeModel: env.EVAL_JUDGE_MODEL?.trim() || 'anthropic/claude-sonnet-5',
     ...judgeTemperature(env.EVAL_JUDGE_TEMPERATURE),
     label: env.EVAL_LABEL?.trim() || 'grid',
     concurrency: positiveInt(env.EVAL_CONCURRENCY, 3),
     ...(env.EVAL_SCORE_DIR?.trim() ? { scoreDir: env.EVAL_SCORE_DIR.trim() } : {}),
   };
+}
+
+/**
+ * Whether an arm makes sense for a case: the case may restrict its inputs
+ * (e.g. an empty-screen case is screenshot-only), and the frozen 2026-07-22
+ * prompt has no transcription pass to run `shot+ocr` with.
+ */
+export function armApplies(meta: EvalCase, prompt: PromptVariant, input: InputMode): boolean {
+  if (meta.inputs && !meta.inputs.includes(input)) return false;
+  return !(prompt === 'main-2026-07-22' && input === 'shot+ocr');
 }

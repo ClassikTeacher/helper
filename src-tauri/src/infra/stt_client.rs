@@ -18,10 +18,57 @@ const OPENROUTER_TRANSCRIPTIONS_URL: &str = "https://openrouter.ai/api/v1/audio/
 /// present in `GET /api/v1/models?output_modalities=transcription`.
 pub const STT_MODEL: &str = "openai/whisper-large-v3-turbo";
 
-/// Language hint sent to the model. Speech is mixed but mostly Russian
-/// (user, 2026-07-21); `ru` biases decoding toward Russian without hard-failing
-/// on English segments.
+/// Default language hint. Speech is mixed but mostly Russian (user,
+/// 2026-07-21); `ru` biases decoding toward Russian without hard-failing on
+/// English segments. Override via `AI_HELPER_STT_LANGUAGE` (`auto` = let the
+/// model detect the language — no hint sent).
 pub const STT_LANGUAGE: &str = "ru";
+const STT_LANGUAGE_ENV: &str = "AI_HELPER_STT_LANGUAGE";
+
+/// Vocabulary hint (Whisper `prompt`, P1): Whisper conditions on the prompt as
+/// if it were preceding speech, so listing the domain's terms — in the script
+/// they should come out in — stops "горутина"/"mutex"/"Kafka" being heard as
+/// ordinary words. Kept well under Whisper's 224-token prompt limit. Override
+/// via `AI_HELPER_STT_PROMPT` (`off` = no prompt).
+pub const DEFAULT_STT_PROMPT: &str = "Техническое собеседование по программированию. \
+Go, горутина, канал, мьютекс, RWMutex, map, slice, defer, context, интерфейс, \
+Python, JavaScript, TypeScript, React, Java, Kotlin, C#, SQL, JOIN, индекс, транзакция, \
+PostgreSQL, Redis, Kafka, Docker, Kubernetes, HTTP, REST, gRPC, API, \
+O(n), хеш-таблица, бинарный поиск, связный список, LeetCode.";
+const STT_PROMPT_ENV: &str = "AI_HELPER_STT_PROMPT";
+
+/// An env override: unset/blank → `default`; the `disable` word → `None`;
+/// anything else → that value.
+fn resolve_override(raw: Option<&str>, disable: &str, default: &str) -> Option<String> {
+    match raw.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(v) if v.eq_ignore_ascii_case(disable) => None,
+        Some(v) => Some(v.to_string()),
+        None => Some(default.to_string()),
+    }
+}
+
+/// Language hint to send: the override, `None` for `auto`, else the default.
+fn resolve_language(raw: Option<&str>) -> Option<String> {
+    resolve_override(raw, "auto", STT_LANGUAGE)
+}
+
+/// Vocabulary prompt to send: the override, `None` for `off`, else the default.
+fn resolve_prompt(raw: Option<&str>) -> Option<String> {
+    resolve_override(raw, "off", DEFAULT_STT_PROMPT)
+}
+
+/// The text fields of the multipart form (besides `file`). Pure — unit-tested.
+fn form_fields(language: Option<&str>, prompt: Option<&str>) -> Vec<(&'static str, String)> {
+    let mut fields = vec![("model", STT_MODEL.to_string())];
+    if let Some(language) = language {
+        fields.push(("language", language.to_string()));
+    }
+    if let Some(prompt) = prompt {
+        fields.push(("prompt", prompt.to_string()));
+    }
+    fields.push(("response_format", "json".to_string()));
+    fields
+}
 
 /// Per-attempt timeout. Whisper-turbo transcribes a ≤60 s clip in a couple of
 /// seconds, so a request still outstanding after this long is almost certainly
@@ -69,6 +116,10 @@ enum Outcome {
     Retry(String),
     /// Permanent failure (auth, bad request, malformed response) — stop.
     Fatal(String),
+    /// The request itself was rejected (400/422). Permanent as sent — but if a
+    /// vocabulary prompt was included, the endpoint may just not accept that
+    /// field, so `transcribe` retries once without it.
+    Rejected(String),
 }
 
 pub struct SttClient {
@@ -93,12 +144,24 @@ impl SttClient {
     /// bad request, malformed body) stops immediately. `wav` is cloned per
     /// attempt (~≤2 MB at the 60 s cap), which is cheap relative to the upload.
     pub async fn transcribe(&self, api_key: &str, wav: Vec<u8>) -> Result<String, String> {
+        let language = resolve_language(std::env::var(STT_LANGUAGE_ENV).ok().as_deref());
+        let mut prompt = resolve_prompt(std::env::var(STT_PROMPT_ENV).ok().as_deref());
         let mut last_err = String::from("STT made no attempts");
-        for _ in 0..STT_MAX_ATTEMPTS {
-            match self.transcribe_once(api_key, wav.clone()).await {
+        let mut attempts = 0;
+        while attempts < STT_MAX_ATTEMPTS {
+            attempts += 1;
+            let fields = form_fields(language.as_deref(), prompt.as_deref());
+            match self.transcribe_once(api_key, wav.clone(), fields).await {
                 Outcome::Done(text) => return Ok(text),
                 Outcome::Retry(err) => last_err = err, // drop this request, retry
-                Outcome::Fatal(err) => return Err(err),
+                // The vocabulary prompt is an optional nicety: if the request was
+                // rejected with it, drop it and try again rather than lose the audio.
+                Outcome::Rejected(err) if prompt.is_some() => {
+                    prompt = None;
+                    last_err = err;
+                    attempts -= 1; // the prompt-less retry does not count
+                }
+                Outcome::Rejected(err) | Outcome::Fatal(err) => return Err(err),
             }
         }
         Err(format!(
@@ -109,7 +172,12 @@ impl SttClient {
     /// One transcription attempt. Classifies the result so `transcribe` knows
     /// whether to retry. Timeouts and network errors are transient; the response
     /// body is only read for a permanent, human-readable HTTP error message.
-    async fn transcribe_once(&self, api_key: &str, wav: Vec<u8>) -> Outcome {
+    async fn transcribe_once(
+        &self,
+        api_key: &str,
+        wav: Vec<u8>,
+        fields: Vec<(&'static str, String)>,
+    ) -> Outcome {
         let file_part = match reqwest::multipart::Part::bytes(wav)
             .file_name("audio.wav")
             .mime_str("audio/wav")
@@ -118,11 +186,11 @@ impl SttClient {
             Err(e) => return Outcome::Fatal(format!("Failed to build audio upload part: {e}")),
         };
 
-        let form = reqwest::multipart::Form::new()
-            .part("file", file_part)
-            .text("model", STT_MODEL)
-            .text("language", STT_LANGUAGE)
-            .text("response_format", "json");
+        let form = fields
+            .into_iter()
+            .fold(reqwest::multipart::Form::new().part("file", file_part), |form, (k, v)| {
+                form.text(k, v)
+            });
 
         let response = match self
             .http
@@ -144,6 +212,8 @@ impl SttClient {
             let msg = format!("STT HTTP {status}: {text}");
             return if is_retryable_status(status.as_u16()) {
                 Outcome::Retry(msg)
+            } else if matches!(status.as_u16(), 400 | 422) {
+                Outcome::Rejected(msg)
             } else {
                 Outcome::Fatal(msg)
             };
@@ -231,5 +301,32 @@ mod tests {
         for s in [400, 401, 403, 404, 422, 200] {
             assert!(!is_retryable_status(s), "{s} should NOT be retryable");
         }
+    }
+
+    #[test]
+    fn language_defaults_to_ru_and_auto_sends_none() {
+        assert_eq!(resolve_language(None).as_deref(), Some("ru"));
+        assert_eq!(resolve_language(Some(" en ")).as_deref(), Some("en"));
+        assert_eq!(resolve_language(Some("AUTO")), None);
+    }
+
+    #[test]
+    fn prompt_defaults_to_the_vocabulary_and_off_disables_it() {
+        assert_eq!(resolve_prompt(None).as_deref(), Some(DEFAULT_STT_PROMPT));
+        assert_eq!(resolve_prompt(Some("off")), None);
+        assert_eq!(resolve_prompt(Some("Rust, borrow checker")).as_deref(), Some("Rust, borrow checker"));
+        // Whisper's prompt limit is 224 tokens; stay far below it.
+        assert!(DEFAULT_STT_PROMPT.chars().count() < 500);
+    }
+
+    #[test]
+    fn form_fields_include_only_what_is_set() {
+        let all = form_fields(Some("ru"), Some("vocab"));
+        let names: Vec<_> = all.iter().map(|(k, _)| *k).collect();
+        assert_eq!(names, ["model", "language", "prompt", "response_format"]);
+
+        let bare = form_fields(None, None);
+        let names: Vec<_> = bare.iter().map(|(k, _)| *k).collect();
+        assert_eq!(names, ["model", "response_format"]);
     }
 }

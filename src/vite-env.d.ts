@@ -17,6 +17,9 @@ interface ImportMetaEnv {
   readonly VITE_HEAVY_TEMPERATURE?: string;
   readonly VITE_HEAVY_REASONING?: string;
   readonly VITE_HEAVY_MAX_IMAGE_EDGE?: string;
+  /** Screen-transcription pass (P1 item 7): off | reviewer | solver | all. */
+  readonly VITE_AUTO_TRANSCRIBE?: string;
+  readonly VITE_TRANSCRIBE_MODEL?: string;
   readonly VITE_TOGGLE_HUD_ACCELERATOR?: string;
   /** Capture-into-batch hotkey (phase 8). */
   readonly VITE_CAPTURE_ACCELERATOR?: string;

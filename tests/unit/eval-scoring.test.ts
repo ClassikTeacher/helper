@@ -8,7 +8,7 @@ import {
 } from '../../eval/lib/scoring';
 import { buildJudgePrompt, parseJudgeVerdict } from '../../eval/lib/judge';
 import { buildRequestBody, OpenRouterFetchLlm } from '../../eval/lib/openrouter';
-import { loadConfig } from '../../eval/lib/config';
+import { armApplies, loadConfig } from '../../eval/lib/config';
 import { renderSummary } from '../../eval/lib/report';
 import type { EvalCase, JudgeVerdict } from '../../eval/lib/types';
 import goCase from '../../docs/prompt-eval/cases/go-http-cache-review/case.json';
@@ -20,6 +20,43 @@ import textAndShot from '../../docs/prompt-eval/runs/2026-08-27-baseline/answers
 
 const GO = goCase as unknown as EvalCase;
 const PY = pyCase as unknown as EvalCase;
+
+const CASE_META = import.meta.glob<EvalCase>('../../docs/prompt-eval/cases/*/case.json', {
+  eager: true,
+  import: 'default',
+});
+const CASE_FILES = import.meta.glob<string>('../../docs/prompt-eval/cases/*/*.{go,py,md,sql,txt}', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+});
+const ALL_CASES = Object.entries(CASE_META).map(([path, meta]) => {
+  const dir = path.slice(0, path.lastIndexOf('/'));
+  return { meta, source: CASE_FILES[`${dir}/${meta.source}`] };
+});
+
+describe('every eval case (ground truth integrity)', () => {
+  it('there are review and solve cases, each kind with a held-out one', () => {
+    const kinds = (k: string) => ALL_CASES.filter((c) => (c.meta.kind ?? 'review') === k);
+    expect(kinds('review').length).toBeGreaterThanOrEqual(2);
+    expect(kinds('solve').length).toBeGreaterThanOrEqual(5);
+    expect(kinds('review').some((c) => c.meta.heldOut)).toBe(true);
+    expect(kinds('solve').some((c) => c.meta.heldOut)).toBe(true);
+  });
+
+  it.each(ALL_CASES.map((c) => [c.meta.id, c] as const))('%s: source present, ids unique, ranges valid', (_id, c) => {
+    expect(c.source, `missing source ${c.meta.source}`).toBeTypeOf('string');
+    const lineCount = Math.max(1, c.source!.replace(/\n+$/, '').split('\n').length);
+    const ids = c.meta.findings.map((f) => f.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const f of c.meta.findings) {
+      expect(['critical', 'high', 'medium', 'low']).toContain(f.severity);
+      expect(f.lines[0]).toBeGreaterThanOrEqual(1);
+      expect(f.lines[1]).toBeGreaterThanOrEqual(f.lines[0]);
+      expect(f.lines[1]).toBeLessThanOrEqual(lineCount);
+    }
+  });
+});
 
 describe('eval cases (ground truth integrity)', () => {
   it.each([
@@ -245,6 +282,30 @@ describe('eval config', () => {
     expect(config.repeats).toBe(5);
     expect(() => loadConfig({ EVAL_INPUTS: 'pixels' })).toThrow(/invalid value/);
     expect(() => loadConfig({ EVAL_REASONING: 'max' })).toThrow(/EVAL_REASONING/);
+  });
+});
+
+describe('eval arms', () => {
+  const solve = ALL_CASES.find((c) => c.meta.id === 'solve-unreadable')!.meta;
+  it('respects a case input restriction and skips shot+ocr for the frozen prompt', () => {
+    expect(armApplies(solve, 'current', 'shot')).toBe(true);
+    expect(armApplies(solve, 'current', 'text')).toBe(false);
+    expect(armApplies(GO, 'current', 'shot+ocr')).toBe(true);
+    expect(armApplies(GO, 'main-2026-07-22', 'shot+ocr')).toBe(false);
+  });
+
+  it('config accepts the shot+ocr input and a transcription model', () => {
+    const config = loadConfig({ EVAL_INPUTS: 'shot,shot+ocr', EVAL_TRANSCRIBE_MODEL: 'vendor/ocr' });
+    expect(config.inputs).toEqual(['shot', 'shot+ocr']);
+    expect(config.transcribeModel).toBe('vendor/ocr');
+  });
+
+  it('solve cases get a criteria rubric, not a defect list', () => {
+    const lru = ALL_CASES.find((c) => c.meta.id === 'solve-lru-cache')!;
+    const prompt = buildJudgePrompt(lru.meta, lru.source!, 'ANSWER');
+    expect(prompt).toContain('<criteria>');
+    expect(prompt).toContain('- L2 [critical]');
+    expect(prompt).not.toContain('Ground-truth defects');
   });
 });
 

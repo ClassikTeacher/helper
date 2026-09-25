@@ -27,10 +27,23 @@ export interface GroundTruthFinding {
   readonly detail: string;
 }
 
+/** How an arm feeds the case to the agent. `shot+ocr` = screenshots + the transcription pass (P1 item 7). */
+export type InputMode = 'text' | 'shot' | 'text+shot' | 'shot+ocr';
+
 export interface EvalCase {
   readonly id: string;
+  /**
+   * `review` (default): `findings` are DEFECTS the review must find.
+   * `solve`: `findings` are CRITERIA a correct answer must satisfy.
+   */
+  readonly kind?: 'review' | 'solve';
   readonly agent: 'solver' | 'reviewer';
+  /** Solver language selector value (`all` = infer); ignored by the reviewer. */
   readonly language: string;
+  /** Input modes that make sense for this case (default: all). */
+  readonly inputs?: readonly InputMode[];
+  /** Rendering overrides for `pnpm eval:shots`. */
+  readonly render?: { readonly splitEvery?: number };
   /** Source file name inside the case directory. */
   readonly source: string;
   /** Held-out cases are never used to tune prompts — only to check them. */

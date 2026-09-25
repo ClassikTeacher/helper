@@ -15,10 +15,11 @@ beforeEach(() => {
 });
 
 describe('TauriAudioAdapter', () => {
-  it('startRecording invokes the audio_start_capture command', async () => {
-    mockInvoke.mockResolvedValue(undefined);
-    await new TauriAudioAdapter().startRecording();
+  it('startRecording invokes audio_start_capture and returns the rolling window', async () => {
+    mockInvoke.mockResolvedValue({ maxSeconds: 90 });
+    const info = await new TauriAudioAdapter().startRecording();
     expect(mockInvoke).toHaveBeenCalledWith(IPC_COMMANDS.audioStartCapture);
+    expect(info).toEqual({ maxSeconds: 90 });
   });
 
   it('stopRecording invokes the audio_stop_capture command', async () => {

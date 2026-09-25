@@ -30,10 +30,13 @@ use crate::ports::{AudioRecorder, RecordedAudio};
 /// promptly even when the output is silent (no events fire during silence).
 const EVENT_TIMEOUT_MS: u32 = 200;
 
-/// Default cap on a single recording's length. Bounds both the capture buffer's
-/// memory and the STT upload size (the OpenAI-compatible endpoint rejects very
-/// large files) — 60 s of 16 kHz mono PCM16 is ~1.9 MB, comfortably under the
-/// limit. Overridable at runtime via `AI_HELPER_MAX_RECORDING_SECS`.
+/// Length of the rolling window a recording keeps: the LAST this-many seconds.
+/// Bounds both the capture buffer's memory and the STT upload size (the
+/// OpenAI-compatible endpoint rejects very large files) — 60 s of 16 kHz mono
+/// PCM16 is ~1.9 MB. The window ROLLS instead of stopping (P0): the question
+/// usually comes at the END of the interlocutor's speech, so a longer
+/// recording drops its oldest audio, never its newest. Overridable at runtime
+/// via `AI_HELPER_MAX_RECORDING_SECS`.
 const DEFAULT_MAX_RECORDING_SECS: u32 = 60;
 
 /// Environment variable overriding [`DEFAULT_MAX_RECORDING_SECS`] (whole seconds).
@@ -48,22 +51,24 @@ fn resolve_max_secs(raw: Option<&str>) -> u32 {
         .unwrap_or(DEFAULT_MAX_RECORDING_SECS)
 }
 
-/// Configured max recording length in seconds (env override or default).
-fn max_recording_secs() -> u32 {
+/// Configured rolling-window length in seconds (env override or default).
+/// Public: `audio_start_capture` reports it so the HUD can say "last N s".
+pub fn max_recording_secs() -> u32 {
     resolve_max_secs(std::env::var(MAX_RECORDING_SECS_ENV).ok().as_deref())
 }
 
 /// Byte budget for the raw interleaved `f32` capture buffer at the given format:
-/// `secs * sample_rate * channels * 4`. Reaching it stops the capture (the audio
-/// is truncated to this length).
+/// `secs * sample_rate * channels * 4` — the rolling window's size.
 fn max_bytes_for(secs: u32, sample_rate: u32, channels: u16) -> usize {
     secs as usize * sample_rate as usize * channels as usize * std::mem::size_of::<f32>()
 }
 
 /// Shared state written by the capture thread, drained by `take_audio`.
 struct Capture {
-    /// Raw interleaved `f32` little-endian bytes as delivered by WASAPI.
-    bytes: Vec<u8>,
+    /// Raw interleaved `f32` little-endian bytes as delivered by WASAPI — a
+    /// rolling window (oldest frames dropped past the byte budget). A deque so
+    /// dropping from the front is O(dropped), not a memmove of the whole buffer.
+    bytes: VecDeque<u8>,
     /// Device format discovered once at stream start: (sample_rate, channels).
     format: Option<(u32, u16)>,
 }
@@ -88,7 +93,7 @@ impl WasapiLoopbackRecorder {
                 running: Arc::new(AtomicBool::new(false)),
                 handle: None,
                 capture: Arc::new(Mutex::new(Capture {
-                    bytes: Vec::new(),
+                    bytes: VecDeque::new(),
                     format: None,
                 })),
                 thread_error: Arc::new(Mutex::new(None)),
@@ -184,7 +189,7 @@ impl AudioRecorder for WasapiLoopbackRecorder {
             .map_err(|_| "audio buffer poisoned".to_string())?;
 
         let (sample_rate, channels) = cap.format.unwrap_or((STT_SAMPLE_RATE, 1));
-        let bytes = std::mem::take(&mut cap.bytes);
+        let bytes: Vec<u8> = std::mem::take(&mut cap.bytes).into();
         cap.format = None;
 
         Ok(RecordedAudio {
@@ -193,6 +198,19 @@ impl AudioRecorder for WasapiLoopbackRecorder {
             channels,
         })
     }
+}
+
+/// Drops the OLDEST bytes past `max_bytes`, in whole frames (`frame_bytes` =
+/// channels × 4) so the interleaved channel order never shifts. Returns
+/// whether anything was dropped. Pure — unit-tested.
+fn keep_latest(buf: &mut VecDeque<u8>, max_bytes: usize, frame_bytes: usize) -> bool {
+    if buf.len() <= max_bytes || frame_bytes == 0 {
+        return false;
+    }
+    let excess = buf.len() - max_bytes;
+    let drop = excess.div_ceil(frame_bytes) * frame_bytes;
+    buf.drain(..drop.min(buf.len()));
+    true
 }
 
 /// Reinterpret a little-endian `f32` byte buffer as samples. A trailing partial
@@ -259,9 +277,10 @@ fn capture_loop(running: &AtomicBool, capture: &Mutex<Capture>) -> Result<(), St
 
     audio_client.start_stream().map_err(map_wasapi)?;
 
-    // Cap the buffer at the configured max duration so a recording left running
-    // can't grow unbounded in memory or exceed the STT upload size limit.
+    // Keep only the last `max_recording_secs()` of audio: bounded memory and
+    // STT upload, and the newest speech (the actual question) is never lost.
     let max_bytes = max_bytes_for(max_recording_secs(), sample_rate, channels);
+    let frame_bytes = channels as usize * std::mem::size_of::<f32>();
 
     let mut queue: VecDeque<u8> = VecDeque::new();
     while running.load(Ordering::SeqCst) {
@@ -273,13 +292,7 @@ fn capture_loop(running: &AtomicBool, capture: &Mutex<Capture>) -> Result<(), St
                 .lock()
                 .map_err(|_| "audio buffer poisoned".to_string())?;
             cap.bytes.extend(queue.drain(..));
-            if cap.bytes.len() >= max_bytes {
-                // Hit the max duration: truncate to the cap and stop capturing.
-                // "Stop = send" still transcribes whatever was captured up to
-                // here; the tail beyond the limit is intentionally dropped.
-                cap.bytes.truncate(max_bytes);
-                break;
-            }
+            keep_latest(&mut cap.bytes, max_bytes, frame_bytes);
         }
         // Times out during silence (no events fire) — that's expected; we just
         // loop and re-check `running`.
@@ -300,6 +313,26 @@ mod tests {
         bytes.extend_from_slice(&1.0f32.to_le_bytes());
         bytes.extend_from_slice(&(-0.5f32).to_le_bytes());
         assert_eq!(bytes_to_f32(&bytes), vec![1.0, -0.5]);
+    }
+
+    #[test]
+    fn keep_latest_drops_the_oldest_whole_frames_and_keeps_the_newest() {
+        // 2-channel f32 frames are 8 bytes; budget = 2 frames.
+        let mut buf: VecDeque<u8> = (0u8..32).collect(); // 4 frames
+        assert!(keep_latest(&mut buf, 16, 8));
+        assert_eq!(buf.iter().copied().collect::<Vec<_>>(), (16u8..32).collect::<Vec<_>>());
+        // Within budget: untouched.
+        assert!(!keep_latest(&mut buf, 16, 8));
+        assert_eq!(buf.len(), 16);
+    }
+
+    #[test]
+    fn keep_latest_rounds_up_to_a_whole_frame() {
+        // 20 bytes, budget 16, frame 8 → excess 4 rounds up to one frame (8).
+        let mut buf: VecDeque<u8> = (0u8..20).collect();
+        keep_latest(&mut buf, 16, 8);
+        assert_eq!(buf.len(), 12);
+        assert_eq!(buf.front(), Some(&8));
     }
 
     #[test]

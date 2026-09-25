@@ -13,6 +13,8 @@ import {
   type RouteProfiles,
 } from '@/core/domain/model-route';
 import { dedupeModels } from '@/core/application/services/resilient-llm';
+import type { ScreenTranscriberConfig } from '@/core/application/services/screen-transcriber';
+import type { AgentId } from '@/core/domain/agent';
 
 /**
  * Builds the BASE model chain from env, so the models can change without a
@@ -118,4 +120,24 @@ export function parseImageEdge(value: string | undefined): number {
   const n = Number(value?.trim());
   if (!value?.trim() || !Number.isFinite(n)) return DEFAULT_MAX_IMAGE_EDGE;
   return Math.min(MAX_IMAGE_EDGE_LIMIT, Math.max(MIN_IMAGE_EDGE_LIMIT, Math.round(n)));
+}
+
+/**
+ * Screen-transcription pass config (P1 item 7) from env:
+ *
+ *   VITE_AUTO_TRANSCRIBE   off (default) | reviewer | solver | all | comma list of agent ids
+ *   VITE_TRANSCRIBE_MODEL  model for the pass (default: the light route's chain)
+ *
+ * Returns null when the pass is off — the runner then never transcribes.
+ */
+export function buildTranscriberConfig(): ScreenTranscriberConfig | null {
+  const raw = import.meta.env.VITE_AUTO_TRANSCRIBE?.trim().toLowerCase();
+  if (!raw || raw === 'off') return null;
+  const ids: AgentId[] = raw === 'all' ? ['solver', 'reviewer'] : [];
+  for (const part of raw.split(',').map((p) => p.trim())) {
+    if (part === 'solver' || part === 'reviewer') ids.push(part);
+  }
+  if (ids.length === 0) return null;
+  const model = import.meta.env.VITE_TRANSCRIBE_MODEL?.trim();
+  return { agents: new Set(ids), ...(model ? { model } : {}) };
 }

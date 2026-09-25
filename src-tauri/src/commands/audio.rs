@@ -6,7 +6,7 @@
 
 use tauri::State;
 
-use crate::dto::TranscribeResult;
+use crate::dto::{AudioStartResult, TranscribeResult};
 use crate::infra::audio::samples_to_wav;
 use crate::AppState;
 
@@ -16,9 +16,13 @@ use crate::AppState;
 const OPENROUTER_API_KEY_SECRET: &str = "openrouter.api_key";
 
 /// Start capturing loopback audio (the output device / interlocutor's voice).
+/// Reports the rolling window the recording keeps (the last N seconds).
 #[tauri::command]
-pub fn audio_start_capture(state: State<'_, AppState>) -> Result<(), String> {
-    state.audio.start()
+pub fn audio_start_capture(state: State<'_, AppState>) -> Result<AudioStartResult, String> {
+    state.audio.start()?;
+    Ok(AudioStartResult {
+        max_seconds: crate::infra::wasapi_loopback::max_recording_secs(),
+    })
 }
 
 /// Stop capturing. Buffered audio is retained for the next `transcribe_audio`.

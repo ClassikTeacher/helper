@@ -1,5 +1,6 @@
 import { ResilientLlm } from '@/core/application/services/resilient-llm';
-import { buildModelRoutes } from './model-chain';
+import { buildModelRoutes, buildTranscriberConfig } from './model-chain';
+import { ScreenTranscriber } from '@/core/application/services/screen-transcriber';
 import { AgentRunner } from '@/core/application/services/agent-runner';
 import { AnalyzeScreenshotUseCase } from '@/core/application/use-cases/analyze-screenshot.use-case';
 import { CaptureScreenshotUseCase } from '@/core/application/use-cases/capture-screenshot.use-case';
@@ -62,7 +63,13 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
   const audio: AudioTranscriptionPort =
     overrides.audio ?? (isTauri ? new TauriAudioAdapter() : new FakeAudioAdapter());
 
-  const agentRunner = new AgentRunner({ screenCapture, llm });
+  // Optional screenshot → text pass (P1 item 7), off unless VITE_AUTO_TRANSCRIBE.
+  const transcriberConfig = buildTranscriberConfig();
+  const agentRunner = new AgentRunner({
+    screenCapture,
+    llm,
+    ...(transcriberConfig ? { transcriber: new ScreenTranscriber(llm, transcriberConfig) } : {}),
+  });
 
   // Persistence (phase 4). In a Tauri window the repositories run on real SQLite
   // via tauri-plugin-sql; in a browser/tests they fall back to in-memory stores
