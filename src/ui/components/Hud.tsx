@@ -3,6 +3,7 @@ import { useHudStore, MAX_SCREENSHOTS } from '@/ui/store/hud.store';
 import { useAnalyzeScreenshot } from '@/ui/hooks/useAnalyzeScreenshot';
 import { useToggleRecording } from '@/ui/hooks/useToggleRecording';
 import { useStopRun } from '@/ui/hooks/useStopRun';
+import { useElapsedSeconds } from '@/ui/hooks/useElapsedSeconds';
 import { useApiKeySettings } from '@/ui/hooks/useApiKeySettings';
 import { AGENT_LIST, resolveAgent } from '@/core/domain/agents-catalog';
 import { AgentSwitch } from './AgentSwitch';
@@ -35,6 +36,9 @@ export function Hud() {
   const codeText = useHudStore((s) => s.codeText);
   const lastRun = useHudStore((s) => s.lastRun);
   const stopped = useHudStore((s) => s.stopped);
+  const recordingStartedAt = useHudStore((s) => s.recordingStartedAt);
+  const recordingWindowSecs = useHudStore((s) => s.recordingWindowSecs);
+  const recordingElapsed = useElapsedSeconds(recordingStartedAt);
   const setCodeText = useHudStore((s) => s.setCodeText);
   const setAgentId = useHudStore((s) => s.setAgentId);
   const setLanguage = useHudStore((s) => s.setLanguage);
@@ -135,6 +139,8 @@ export function Hud() {
         transcript={transcript}
         onToggle={toggleRecording}
         disabled={streaming || transcribing}
+        elapsedSecs={recordingElapsed}
+        windowSecs={recordingWindowSecs}
       />
       {/* Shows that the current answer used an extra hint, not just the screenshot. */}
       {activeHint && (

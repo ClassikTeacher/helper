@@ -1,4 +1,7 @@
-import type { AudioTranscriptionPort } from '@/core/application/ports/audio-transcription.port';
+import type {
+  AudioTranscriptionPort,
+  RecordingInfo,
+} from '@/core/application/ports/audio-transcription.port';
 
 /**
  * AudioTranscriptionPort for dev/tests — no native calls. Returns a fixed
@@ -10,8 +13,9 @@ export class FakeAudioAdapter implements AudioTranscriptionPort {
 
   constructor(private readonly transcript = '') {}
 
-  async startRecording(): Promise<void> {
+  async startRecording(): Promise<RecordingInfo> {
     this.recording = true;
+    return { maxSeconds: 60 };
   }
 
   async stopRecording(): Promise<void> {

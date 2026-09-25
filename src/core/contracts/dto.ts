@@ -133,6 +133,11 @@ export interface SecretSetRequestDto {
 // `audioStartCapture`/`audioStopCapture` take no payload. `transcribeAudio`
 // returns this. The recorded audio stays in native; only the text crosses the
 // seam. Mirror of `TranscribeResult` in dto.rs.
+/** Result of `audioStartCapture`: the recording keeps only the LAST `maxSeconds`. */
+export interface AudioStartResultDto {
+  readonly maxSeconds: number;
+}
+
 export interface TranscribeResultDto {
   /** Recognized transcript (may be empty if nothing was captured). */
   readonly text: string;

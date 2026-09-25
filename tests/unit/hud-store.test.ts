@@ -136,3 +136,16 @@ describe('hud.store code text + run info (R15, R9/R19)', () => {
     });
   });
 });
+
+describe('hud.store recording clock (P0)', () => {
+  it('startRecordingClock records the start and window; stopping clears the start', () => {
+    useHudStore.getState().startRecordingClock(90);
+    const started = useHudStore.getState();
+    expect(started.recording).toBe(true);
+    expect(started.recordingStartedAt).not.toBeNull();
+    expect(started.recordingWindowSecs).toBe(90);
+
+    useHudStore.getState().startTranscribing();
+    expect(useHudStore.getState().recordingStartedAt).toBeNull();
+  });
+});

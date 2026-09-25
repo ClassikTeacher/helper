@@ -294,7 +294,7 @@ describe('registerHotkeys', () => {
     // A transcribe that rejects — the audio context is lost, and the user must
     // be told rather than have it silently swallowed.
     const failingAudio: AudioTranscriptionPort = {
-      startRecording: async () => {},
+      startRecording: async () => ({ maxSeconds: 60 }),
       stopRecording: async () => {},
       transcribe: async () => {
         throw new Error('stt provider down');

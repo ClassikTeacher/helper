@@ -66,6 +66,10 @@ interface HudState {
   readonly activeHint: string;
   /** True while loopback audio is being captured (phase 9). */
   readonly recording: boolean;
+  /** When the current recording started (epoch ms), null when not recording. */
+  readonly recordingStartedAt: number | null;
+  /** Rolling window the recording keeps (only the last N seconds are sent). */
+  readonly recordingWindowSecs: number;
   /** True while the captured audio is being transcribed (phase 9). */
   readonly transcribing: boolean;
   /** The transcript applied to the current/last analysis (empty when none). */
@@ -108,6 +112,8 @@ interface HudState {
   setActiveHint(hint: string): void;
   /** Set the recording flag (record hotkey/button toggle). */
   setRecording(recording: boolean): void;
+  /** A recording started now; it keeps the last `windowSecs`. */
+  startRecordingClock(windowSecs: number): void;
   /** Enter the transcribing state: recording stops, spinner shows, prior transcript cleared. */
   startTranscribing(): void;
   /** Store the finished transcript and clear the transcribing spinner. */
@@ -129,6 +135,8 @@ export const useHudStore = create<HudState>((set) => ({
   instructions: '',
   activeHint: '',
   recording: false,
+  recordingStartedAt: null,
+  recordingWindowSecs: 60,
   transcribing: false,
   transcript: '',
   codeText: '',
@@ -146,7 +154,13 @@ export const useHudStore = create<HudState>((set) => ({
   // STT call (or a failed analyze after transcription) must not leave the "●
   // запись"/"расшифровка…" indicators stuck on when nothing is actually running.
   fail: (message) =>
-    set({ streaming: false, recording: false, transcribing: false, error: message }),
+    set({
+      streaming: false,
+      recording: false,
+      recordingStartedAt: null,
+      transcribing: false,
+      error: message,
+    }),
   setError: (message) => set({ error: message }),
   addScreenshot: (screenshot) =>
     set((s) =>
@@ -164,8 +178,12 @@ export const useHudStore = create<HudState>((set) => ({
   setLanguage: (language) => set({ language }),
   setInstructions: (instructions) => set({ instructions }),
   setActiveHint: (hint) => set({ activeHint: hint }),
-  setRecording: (recording) => set({ recording }),
-  startTranscribing: () => set({ recording: false, transcribing: true, transcript: '', error: null }),
+  setRecording: (recording) =>
+    set(recording ? { recording } : { recording, recordingStartedAt: null }),
+  startRecordingClock: (windowSecs) =>
+    set({ recording: true, recordingStartedAt: Date.now(), recordingWindowSecs: windowSecs }),
+  startTranscribing: () =>
+    set({ recording: false, recordingStartedAt: null, transcribing: true, transcript: '', error: null }),
   setTranscript: (transcript) => set({ transcript, transcribing: false }),
   setCodeText: (codeText) => set({ codeText }),
   setLastRun: (lastRun) => set({ lastRun }),
@@ -177,6 +195,7 @@ export const useHudStore = create<HudState>((set) => ({
       screenshots: [],
       activeHint: '',
       recording: false,
+      recordingStartedAt: null,
       transcribing: false,
       transcript: '',
       codeText: '',

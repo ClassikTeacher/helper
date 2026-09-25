@@ -1,7 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import { IPC_COMMANDS } from '@/core/contracts/ipc-commands';
-import type { TranscribeResultDto } from '@/core/contracts/dto';
-import type { AudioTranscriptionPort } from '@/core/application/ports/audio-transcription.port';
+import type { AudioStartResultDto, TranscribeResultDto } from '@/core/contracts/dto';
+import type {
+  AudioTranscriptionPort,
+  RecordingInfo,
+} from '@/core/application/ports/audio-transcription.port';
 
 /**
  * Native adapter for AudioTranscriptionPort — the secure-native production path
@@ -10,8 +13,9 @@ import type { AudioTranscriptionPort } from '@/core/application/ports/audio-tran
  * back. See architecture.md §3, §6 and decisions.md ADR #14.
  */
 export class TauriAudioAdapter implements AudioTranscriptionPort {
-  async startRecording(): Promise<void> {
-    await invoke<void>(IPC_COMMANDS.audioStartCapture);
+  async startRecording(): Promise<RecordingInfo> {
+    const result = await invoke<AudioStartResultDto>(IPC_COMMANDS.audioStartCapture);
+    return { maxSeconds: result.maxSeconds };
   }
 
   async stopRecording(): Promise<void> {

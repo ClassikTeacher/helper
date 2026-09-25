@@ -184,6 +184,14 @@ pub struct SecretSetRequest {
 // The recorded audio itself never crosses the seam — only the text. Mirror of
 // `TranscribeResultDto` in dto.ts.
 
+/// Result of `audio_start_capture`: the rolling window the recording keeps
+/// (the LAST `max_seconds`), so the HUD can tell the user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioStartResult {
+    pub max_seconds: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscribeResult {
