@@ -27,6 +27,8 @@ pub struct AppState {
     /// tests in `infra::openrouter_client::tests` (architecture.md §6: traits
     /// only when a fake is actually needed).
     pub llm: OpenRouterClient,
+    /// In-flight `llm_stream` requests that `llm_cancel` can stop.
+    pub llm_cancels: infra::llm_cancel::CancelRegistry,
     /// Loopback audio recorder (phase 9). Behind a trait so tests/non-Windows
     /// can swap it; the real impl is WASAPI-only.
     pub audio: Box<dyn AudioRecorder>,
@@ -44,6 +46,7 @@ impl AppState {
             ocr: Box::new(infra::ort_ocr::OrtOcr::new()),
             secrets: Box::new(infra::keyring_secrets::KeyringSecrets::new()),
             llm: OpenRouterClient::new(),
+            llm_cancels: infra::llm_cancel::CancelRegistry::new(),
             audio: Box::new(WasapiLoopbackRecorder::new()),
             stt: SttClient::new(),
         }
@@ -83,6 +86,7 @@ pub fn run() {
             commands::capture::capture_screen,
             commands::ocr::ocr_image,
             commands::llm::llm_stream,
+            commands::llm::llm_cancel,
             commands::secrets::secret_get,
             commands::secrets::secret_set,
             commands::audio::audio_start_capture,

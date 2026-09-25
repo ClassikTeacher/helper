@@ -78,12 +78,16 @@ interface HudState {
   readonly codeText: string;
   /** Model/usage/cost of the last completed run; null while streaming or before any run. */
   readonly lastRun: RunInfo | null;
+  /** True when the current answer was stopped by the user (partial answer kept). */
+  readonly stopped: boolean;
 
   open(): void;
   close(): void;
   startStreaming(): void;
   appendAnswer(delta: string): void;
   finishStreaming(): void;
+  /** The user stopped the answer: streaming ends, the partial answer stays. */
+  stopStreaming(): void;
   fail(message: string): void;
   /**
    * Show an error WITHOUT the terminal side effects of `fail` (which also stops
@@ -129,13 +133,15 @@ export const useHudStore = create<HudState>((set) => ({
   transcript: '',
   codeText: '',
   lastRun: null,
+  stopped: false,
 
   open: () => set({ visible: true }),
   close: () => set({ visible: false }),
   startStreaming: () =>
-    set({ streaming: true, answer: '', error: null, visible: true, lastRun: null }),
+    set({ streaming: true, answer: '', error: null, visible: true, lastRun: null, stopped: false }),
   appendAnswer: (delta) => set((s) => ({ answer: s.answer + delta })),
   finishStreaming: () => set({ streaming: false }),
+  stopStreaming: () => set({ streaming: false, transcribing: false, stopped: true }),
   // Any terminal failure also clears the recording/transcribing flags — a failed
   // STT call (or a failed analyze after transcription) must not leave the "●
   // запись"/"расшифровка…" indicators stuck on when nothing is actually running.
@@ -175,5 +181,6 @@ export const useHudStore = create<HudState>((set) => ({
       transcript: '',
       codeText: '',
       lastRun: null,
+      stopped: false,
     }),
 }));

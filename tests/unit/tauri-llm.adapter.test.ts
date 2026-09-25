@@ -66,6 +66,7 @@ describe('TauriLlmAdapter', () => {
         request: {
           model: REQUEST.model,
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+          requestId: expect.any(String),
         },
         channel: expect.anything(),
       }),
@@ -109,6 +110,38 @@ describe('TauriLlmAdapter', () => {
         model: 'anthropic/claude-sonnet-5',
       },
     ]);
+  });
+
+  it('on abort, stops yielding and asks native to cancel THIS request (P0)', async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === IPC_COMMANDS.llmStream) {
+        lastChannel!.emit({ type: 'text-delta', delta: 'partial' });
+        return new Promise<void>(() => {}); // never settles: a long answer
+      }
+    });
+    const controller = new AbortController();
+    const out: string[] = [];
+
+    for await (const chunk of new TauriLlmAdapter().stream({ ...REQUEST, signal: controller.signal })) {
+      if (chunk.type === 'text-delta') out.push(chunk.delta);
+      controller.abort();
+    }
+
+    const streamCall = (invoke as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === IPC_COMMANDS.llmStream);
+    const cancelCall = (invoke as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === IPC_COMMANDS.llmCancel);
+    expect(out).toEqual(['partial']);
+    expect(cancelCall?.[1]).toEqual({ request: { requestId: streamCall?.[1].request.requestId } });
+  });
+
+  it('does not send a cancel for a stream that already finished', async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      lastChannel!.emit({ type: 'finish', reason: 'stop' });
+    });
+    const controller = new AbortController();
+    await collect(new TauriLlmAdapter().stream({ ...REQUEST, signal: controller.signal }));
+    controller.abort();
+
+    expect((invoke as ReturnType<typeof vi.fn>).mock.calls.some((c) => c[0] === IPC_COMMANDS.llmCancel)).toBe(false);
   });
 
   it('yields text-delta chunks as they arrive, before the command resolves', async () => {

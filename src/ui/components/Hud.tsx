@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useHudStore, MAX_SCREENSHOTS } from '@/ui/store/hud.store';
 import { useAnalyzeScreenshot } from '@/ui/hooks/useAnalyzeScreenshot';
 import { useToggleRecording } from '@/ui/hooks/useToggleRecording';
+import { useStopRun } from '@/ui/hooks/useStopRun';
 import { useApiKeySettings } from '@/ui/hooks/useApiKeySettings';
 import { AGENT_LIST, resolveAgent } from '@/core/domain/agents-catalog';
 import { AgentSwitch } from './AgentSwitch';
@@ -33,6 +34,7 @@ export function Hud() {
   const transcript = useHudStore((s) => s.transcript);
   const codeText = useHudStore((s) => s.codeText);
   const lastRun = useHudStore((s) => s.lastRun);
+  const stopped = useHudStore((s) => s.stopped);
   const setCodeText = useHudStore((s) => s.setCodeText);
   const setAgentId = useHudStore((s) => s.setAgentId);
   const setLanguage = useHudStore((s) => s.setLanguage);
@@ -41,6 +43,7 @@ export function Hud() {
   const clearScreenshots = useHudStore((s) => s.clearScreenshots);
   const analyze = useAnalyzeScreenshot();
   const toggleRecording = useToggleRecording();
+  const stop = useStopRun(streaming);
   const apiKey = useApiKeySettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -77,6 +80,17 @@ export function Hud() {
         </span>
         <div className="flex items-center gap-3">
           {streaming && <span className="text-xs text-indigo-400">streaming…</span>}
+          {streaming && (
+            <button
+              type="button"
+              onClick={stop}
+              aria-label="Остановить ответ"
+              title="Остановить (Esc)"
+              className="rounded border border-neutral-600 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-800"
+            >
+              ■ Стоп
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setSettingsOpen((open) => !open)}
@@ -130,7 +144,7 @@ export function Hud() {
         </div>
       )}
       <div className="mb-3 max-h-[320px] overflow-y-auto">
-        <MessageList answer={answer} streaming={streaming} error={error} />
+        <MessageList answer={answer} streaming={streaming} error={error} stopped={stopped} />
         <RunInfoLine info={lastRun} />
       </div>
       <PromptInput

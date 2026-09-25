@@ -95,8 +95,10 @@ export class ResilientLlm implements LlmPort {
 
       // Reached via a failover `break`, or an inner stream that ended without a
       // terminal chunk. If we already produced content or exhausted the chain,
-      // stop; otherwise fall through to the next model.
-      if (produced || isLast) return;
+      // stop; otherwise fall through to the next model — unless the caller
+      // aborted: an aborted stream also ends without a terminal chunk, and it
+      // must NOT be mistaken for a provider failure and re-sent to a fallback.
+      if (produced || isLast || request.signal?.aborted) return;
     }
   }
 }

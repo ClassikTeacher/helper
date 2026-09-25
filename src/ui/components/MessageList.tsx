@@ -4,6 +4,8 @@ interface MessageListProps {
   readonly answer: string;
   readonly streaming: boolean;
   readonly error: string | null;
+  /** The user stopped the answer (the partial answer stays visible). */
+  readonly stopped?: boolean;
 }
 
 /**
@@ -16,7 +18,7 @@ interface MessageListProps {
  * throw away exactly the "show partial failure" capability the discriminated
  * `LlmChunk` union exists for.
  */
-export function MessageList({ answer, streaming, error }: MessageListProps) {
+export function MessageList({ answer, streaming, error, stopped = false }: MessageListProps) {
   const hasAnswer = answer.length > 0;
 
   if (!hasAnswer && !streaming && !error) {
@@ -27,6 +29,7 @@ export function MessageList({ answer, streaming, error }: MessageListProps) {
     <div className="space-y-2">
       {hasAnswer && <MarkdownMessage content={answer} />}
       {streaming && <span className="inline-block h-4 w-2 animate-pulse bg-neutral-400 align-middle" />}
+      {stopped && !streaming && <div className="text-xs text-neutral-500">Остановлено.</div>}
       {error && (
         <div className="text-red-400 text-sm">{hasAnswer ? `Interrupted: ${error}` : `Error: ${error}`}</div>
       )}

@@ -110,6 +110,9 @@ export class AgentRunner {
       messages,
       ...(params.signal ? { signal: params.signal } : {}),
     })) {
+      // Aborted (Stop / superseded): emit nothing more, even if the adapter
+      // still hands over an already-buffered chunk.
+      if (params.signal?.aborted) return;
       if (chunk.type === 'text-delta') yield chunk.delta;
       else if (chunk.type === 'error') throw new Error(chunk.message);
       // 'finish' carries reason/usage/model — reported out-of-band, not as text.

@@ -88,6 +88,12 @@ export interface LlmStreamRequestDto {
   readonly reasoningEffort?: string;
   /** Longest image edge in px; native downscales larger images before sending (R4/R17). */
   readonly maxImageEdge?: number;
+  /** Client-generated id so `llm_cancel` can stop this request. */
+  readonly requestId?: string;
+}
+
+export interface LlmCancelRequestDto {
+  readonly requestId: string;
 }
 
 export interface LlmUsageDto {

@@ -18,8 +18,12 @@ import type { AppContainer } from './container.types';
  * pasted code and no shots, the request is text-only.
  */
 export async function runSend(useCases: AppContainer['useCases']): Promise<void> {
-  const { screenshots, recording, agentId, language, instructions, codeText } =
+  const { screenshots, recording, transcribing, agentId, language, instructions, codeText } =
     useHudStore.getState();
+  // While the previous send is still transcribing, a new send is ignored: its
+  // audio is already being processed and would otherwise be lost (a send
+  // DURING streaming is fine — it supersedes the running answer, see run-control).
+  if (transcribing) return;
   if (screenshots.length === 0 && !recording && !codeText.trim()) {
     useHudStore
       .getState()

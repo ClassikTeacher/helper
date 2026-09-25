@@ -1,6 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { IPC_COMMANDS } from '@/core/contracts/ipc-commands';
 import type {
+  LlmCancelRequestDto,
   LlmChunkDto,
   LlmContentPartDto,
   LlmMessageDto,
@@ -29,7 +30,10 @@ import type {
  */
 export class TauriLlmAdapter implements LlmPort {
   async *stream(request: LlmStreamRequest): AsyncIterable<LlmChunk> {
-    const dtoRequest: LlmStreamRequestDto = toStreamRequestDto(request);
+    // Tags the native request so an abort can stop it there too (P0): without
+    // this the HTTP stream kept generating — and billing — after Stop.
+    const requestId = newRequestId();
+    const dtoRequest: LlmStreamRequestDto = { ...toStreamRequestDto(request), requestId };
 
     const pending: LlmChunkDto[] = [];
     let wake: (() => void) | undefined;
@@ -52,13 +56,22 @@ export class TauriLlmAdapter implements LlmPort {
         notify();
       });
 
-    // Best-effort local cancellation: there is no native cancel command yet,
-    // so the `llm_stream` invocation keeps running in the background, but we
-    // stop consuming/yielding further chunks — the `for await` loop on the
-    // caller's side just ends, same as a normal `finish`.
+    // Cancellation: stop consuming immediately AND ask native to drop the
+    // HTTP stream (`llm_cancel`), unless the stream already terminated. The
+    // caller's `for await` just ends, with no terminal chunk.
     let aborted = request.signal?.aborted ?? false;
+    let terminated = false;
+    const cancelNative = () => {
+      if (terminated) return;
+      const payload: LlmCancelRequestDto = { requestId };
+      invoke<void>(IPC_COMMANDS.llmCancel, { request: payload }).catch(() => {
+        // Best effort: a failed cancel only means the request runs to its end.
+      });
+    };
+    if (aborted) cancelNative();
     const onAbort = () => {
       aborted = true;
+      cancelNative();
       notify();
     };
     request.signal?.addEventListener('abort', onAbort, { once: true });
@@ -70,12 +83,14 @@ export class TauriLlmAdapter implements LlmPort {
         if (pending.length > 0) {
           const dto = pending.shift()!;
           const chunk = fromChunkDto(dto);
+          if (chunk.type === 'finish' || chunk.type === 'error') terminated = true;
           yield chunk;
-          if (chunk.type === 'finish' || chunk.type === 'error') return;
+          if (terminated) return;
           continue;
         }
 
         if (invokeSettled) {
+          terminated = true;
           if (invokeError) {
             // An invoke rejection is an IPC/command failure (not a provider
             // error) — the same call would fail for any model, so don't fail
@@ -93,6 +108,12 @@ export class TauriLlmAdapter implements LlmPort {
       request.signal?.removeEventListener('abort', onAbort);
     }
   }
+}
+
+function newRequestId(): string {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function toErrorMessage(error: unknown): string {

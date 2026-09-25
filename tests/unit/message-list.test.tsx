@@ -28,3 +28,10 @@ describe('MessageList', () => {
     expect(container.querySelector('.animate-pulse')).not.toBeNull();
   });
 });
+
+describe('MessageList stop note (P0)', () => {
+  it('shows "Остановлено." under a stopped partial answer', () => {
+    render(<MessageList answer="partial" streaming={false} error={null} stopped />);
+    expect(screen.getByText('Остановлено.')).toBeInTheDocument();
+  });
+});

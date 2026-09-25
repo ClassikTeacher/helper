@@ -4,6 +4,7 @@ import type { AppContainer } from './container.types';
 import type { Agent } from '@/core/domain/agent';
 import type { ProgrammingLanguage } from '@/core/domain/language';
 import type { Screenshot } from '@/core/domain/screenshot';
+import { abortReason, beginRun, endRun } from './run-control';
 
 export interface AnalyzeAndStreamParams {
   /** Which agent (mode) to run. */
@@ -32,6 +33,8 @@ export async function analyzeAndStream(
     Partial<Pick<AppContainer['useCases'], 'recordConversation' | 'transcribeAudio'>>,
   params: AnalyzeAndStreamParams,
 ): Promise<void> {
+  // Exactly one active run (P0): starting this one aborts any run in flight.
+  const signal = beginRun();
   try {
     // If loopback recording is active (phase 9), stop it and transcribe BEFORE
     // streaming so the "transcribing…" spinner shows first and the transcript
@@ -39,6 +42,7 @@ export async function analyzeAndStream(
     // here and is surfaced via `fail` — it does NOT get swallowed or silently
     // drop the audio context.
     const transcript = await collectTranscript(useCases);
+    if (signal.aborted) return settleAborted(signal);
 
     useHudStore.getState().startStreaming();
 
@@ -50,6 +54,7 @@ export async function analyzeAndStream(
     for await (const delta of useCases.analyzeScreenshot.execute({
       ...params,
       transcript,
+      signal,
       onFinish: (finish) =>
         useHudStore.getState().setLastRun({
           ...(finish.model ? { model: finish.model } : {}),
@@ -66,6 +71,8 @@ export async function analyzeAndStream(
     })) {
       useHudStore.getState().appendAnswer(delta);
     }
+    // Stopped or superseded: keep the inputs for a re-run, record nothing.
+    if (signal.aborted) return settleAborted(signal);
     useHudStore.getState().finishStreaming();
 
     // Clear the live inputs only now that they have been successfully
@@ -92,8 +99,20 @@ export async function analyzeAndStream(
         .catch((err) => console.error('Failed to persist conversation', err));
     }
   } catch (err) {
+    if (signal.aborted) return settleAborted(signal);
     useHudStore.getState().fail(err instanceof Error ? err.message : String(err));
+  } finally {
+    endRun(signal);
   }
+}
+
+/**
+ * Winds down an aborted run. A user Stop keeps the partial answer with a
+ * "stopped" note; a superseded run leaves the HUD alone — the newer run
+ * already reset and owns it.
+ */
+function settleAborted(signal: AbortSignal): void {
+  if (abortReason(signal) === 'stop') useHudStore.getState().stopStreaming();
 }
 
 /**

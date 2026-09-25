@@ -110,6 +110,17 @@ pub struct LlmStreamRequest {
     /// request (R4/R17). `None` = send as captured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_image_edge: Option<u32>,
+    /// Client-generated id for `llm_cancel` (stop / superseded run). `None` =
+    /// not cancellable (older webviews, tests).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+}
+
+/// Payload of `llm_cancel`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmCancelRequest {
+    pub request_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -6,7 +6,9 @@
 use tauri::ipc::Channel;
 use tauri::State;
 
-use crate::dto::{LlmChunk, LlmStreamRequest};
+use futures_util::future::{select, Either};
+
+use crate::dto::{LlmCancelRequest, LlmChunk, LlmStreamRequest};
 use crate::infra::image::downscale_request_images;
 use crate::AppState;
 
@@ -46,31 +48,69 @@ pub async fn llm_stream(
         }
     };
 
-    // Per-request image cap (R4/R17): decode/resample/encode is CPU work, so
-    // it runs off the async runtime. The closure always hands the request back
-    // (a panicking image worker is contained inside `downscale_request_images`),
-    // so no defensive clone of the multi-MB request is needed.
-    let request = if request.max_image_edge.is_some() {
-        match tauri::async_runtime::spawn_blocking(move || {
-            let mut request = request;
-            downscale_request_images(&mut request);
-            request
-        })
-        .await
-        {
-            Ok(request) => request,
-            Err(e) => {
-                let _ = channel.send(LlmChunk::Error {
-                    message: format!("image preparation failed: {e}"),
-                    retryable: false,
-                });
-                return Ok(());
+    // Cancellation (P0): the whole request — image preparation + streaming —
+    // races against the request's cancel signal. Dropping the losing future
+    // drops the HTTP response, closing the connection so generation stops
+    // upstream. Requests without an id are simply not cancellable.
+    let request_id = request.request_id.clone();
+    let cancel = request_id.as_deref().map(|id| state.llm_cancels.register(id));
+
+    let work = async {
+        // Per-request image cap (R4/R17): decode/resample/encode is CPU work, so
+        // it runs off the async runtime. The closure always hands the request
+        // back (a panicking image worker is contained inside
+        // `downscale_request_images`), so no defensive clone is needed.
+        let request = if request.max_image_edge.is_some() {
+            match tauri::async_runtime::spawn_blocking(move || {
+                let mut request = request;
+                downscale_request_images(&mut request);
+                request
+            })
+            .await
+            {
+                Ok(request) => request,
+                Err(e) => {
+                    let _ = channel.send(LlmChunk::Error {
+                        message: format!("image preparation failed: {e}"),
+                        retryable: false,
+                    });
+                    return;
+                }
             }
-        }
-    } else {
-        request
+        } else {
+            request
+        };
+        state.llm.stream_chat(&api_key, &request, &channel).await;
     };
 
-    state.llm.stream_chat(&api_key, &request, &channel).await;
+    match cancel {
+        Some(notify) => {
+            let cancelled = std::pin::pin!(notify.notified());
+            let work = std::pin::pin!(work);
+            if let Either::Right(_) = select(work, cancelled).await {
+                // The webview stopped listening already; a terminal chunk keeps
+                // the channel contract (finish-or-error) intact regardless.
+                let _ = channel.send(LlmChunk::Finish {
+                    reason: "cancelled".to_string(),
+                    usage: None,
+                    model: None,
+                });
+            }
+        }
+        None => work.await,
+    }
+
+    if let Some(id) = request_id.as_deref() {
+        state.llm_cancels.finish(id);
+    }
+    Ok(())
+}
+
+/// Stops an in-flight `llm_stream` (P0: the HUD's Stop / a superseding send).
+/// Idempotent and race-safe — a cancel for a request that has not registered
+/// yet is remembered (see `CancelRegistry`).
+#[tauri::command]
+pub fn llm_cancel(state: State<'_, AppState>, request: LlmCancelRequest) -> Result<(), String> {
+    state.llm_cancels.cancel(&request.request_id);
     Ok(())
 }

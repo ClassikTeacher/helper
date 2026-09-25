@@ -686,6 +686,7 @@ mod tests {
             temperature: None,
             reasoning_effort: None,
             max_image_edge: None,
+            request_id: None,
         };
 
         let body = build_request_body(&request);
@@ -730,6 +731,7 @@ mod tests {
             temperature: None,
             reasoning_effort: None,
             max_image_edge: None,
+            request_id: None,
         };
 
         let body = build_request_body(&request);
@@ -753,6 +755,7 @@ mod tests {
             temperature: None,
             reasoning_effort: None,
             max_image_edge: None,
+            request_id: None,
         }
     }
 
