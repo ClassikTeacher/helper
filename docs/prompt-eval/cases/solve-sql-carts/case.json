@@ -1,0 +1,17 @@
+{
+  "id": "solve-sql-carts",
+  "kind": "solve",
+  "agent": "solver",
+  "language": "sql",
+  "source": "task.sql",
+  "heldOut": false,
+  "notes": "SQL task over a schema. Criteria.",
+  "findings": [
+    { "id": "Q1", "severity": "critical", "origin": "seeded", "lines": [21, 22], "title": "Correct semantics", "detail": "Returns carts having at least one cart_items row whose product has is_active = false (NOT carts where all items are inactive, not products)." },
+    { "id": "Q2", "severity": "high", "origin": "seeded", "lines": [22, 22], "title": "Each cart once", "detail": "No duplicates when a cart has several inactive products: EXISTS, DISTINCT or GROUP BY." },
+    { "id": "Q3", "severity": "high", "origin": "seeded", "lines": [21, 21], "title": "Selects id and user_id", "detail": "The result columns are carts.id and carts.user_id." },
+    { "id": "Q4", "severity": "medium", "origin": "seeded", "lines": [14, 19], "title": "Correct join keys", "detail": "cart_items.cart_id = carts.id and cart_items.product_id = products.id." },
+    { "id": "Q5", "severity": "medium", "origin": "seeded", "lines": [1, 1], "title": "Format: task line, code first", "detail": "Starts with one short line naming the task (e.g. \"SQL: …\"); the query block comes first." },
+    { "id": "Q6", "severity": "low", "origin": "seeded", "lines": [4, 4], "title": "Index hint", "detail": "Mentions a useful index (e.g. on products(is_active) partial, or cart_items(product_id))." }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "id": "solve-go-channels-theory",
+  "kind": "solve",
+  "agent": "solver",
+  "language": "all",
+  "source": "question.md",
+  "heldOut": false,
+  "notes": "Theory question — no code to write. Criteria = the facts a correct answer must state.",
+  "findings": [
+    { "id": "C1", "severity": "critical", "origin": "seeded", "lines": [4, 4], "title": "Send on closed channel panics", "detail": "panic: send on closed channel." },
+    { "id": "C2", "severity": "high", "origin": "seeded", "lines": [5, 5], "title": "Receive from closed channel", "detail": "Buffered values are still received first; then receives return immediately with the zero value and ok == false (v, ok := <-ch)." },
+    { "id": "C3", "severity": "high", "origin": "seeded", "lines": [6, 6], "title": "nil channel blocks forever", "detail": "Both send and receive on a nil channel block forever (deadlock if nothing else runs); useful to disable a select case." },
+    { "id": "C4", "severity": "medium", "origin": "seeded", "lines": [7, 7], "title": "close(nil) panics", "detail": "Closing a nil channel panics." },
+    { "id": "C5", "severity": "medium", "origin": "seeded", "lines": [7, 7], "title": "Double close panics", "detail": "Closing an already closed channel panics." },
+    { "id": "C6", "severity": "low", "origin": "seeded", "lines": [8, 8], "title": "range ends after drain", "detail": "range receives the remaining buffered values and exits when the channel is closed and empty." }
+  ]
+}

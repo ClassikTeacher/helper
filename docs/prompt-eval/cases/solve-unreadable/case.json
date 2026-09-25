@@ -1,0 +1,14 @@
+{
+  "id": "solve-unreadable",
+  "kind": "solve",
+  "agent": "solver",
+  "language": "all",
+  "source": "empty.txt",
+  "heldOut": false,
+  "inputs": ["shot"],
+  "notes": "An editor with nothing in it: there is no task. The answer must say so in one line instead of inventing one (R1 escape hatch). Screenshot-only.",
+  "findings": [
+    { "id": "U1", "severity": "critical", "origin": "seeded", "lines": [1, 1], "title": "Says the task cannot be determined", "detail": "One line like \"Не могу разобрать задачу: …\"." },
+    { "id": "U2", "severity": "critical", "origin": "seeded", "lines": [1, 1], "title": "Does not invent a task", "detail": "No made-up problem statement, solution or code." }
+  ]
+}
