@@ -18,6 +18,7 @@ use scap::{
 };
 
 use crate::dto::{CaptureRegion, CaptureRequest, CaptureResult};
+use crate::infra::image::{downscale_to_long_edge, encode_png, MAX_CAPTURE_LONG_EDGE_PX};
 use crate::ports::ScreenCapturer;
 
 pub struct ScapCapturer;
@@ -73,8 +74,13 @@ impl ScreenCapturer for ScapCapturer {
             _ => return Err("unexpected frame format (expected BGRA)".to_string()),
         };
 
-        let (out_width, out_height, rgba) =
+        let (crop_width, crop_height, rgba) =
             bgra_to_rgba(width, height, &bgra, request.region.as_ref())?;
+        // Cap at the largest size any model uses (R4/R17): a 4K frame is
+        // area-downscaled once here; the per-request cap (route/model
+        // specific) is applied later in `llm_stream`. 2560×1440 passes as-is.
+        let (out_width, out_height, rgba) =
+            downscale_to_long_edge(crop_width, crop_height, rgba, MAX_CAPTURE_LONG_EDGE_PX);
         let png = encode_png(out_width, out_height, &rgba)?;
 
         Ok(CaptureResult {
@@ -163,22 +169,6 @@ fn bgra_to_rgba(
     Ok((rw, rh, rgba))
 }
 
-fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
-    let mut buf = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut buf, width, height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder
-            .write_header()
-            .map_err(|e| format!("png write_header failed: {e}"))?;
-        writer
-            .write_image_data(rgba)
-            .map_err(|e| format!("png write_image_data failed: {e}"))?;
-    }
-    Ok(buf)
-}
-
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -245,13 +235,5 @@ mod tests {
     fn rejects_undersized_buffer() {
         let bgra = vec![0u8; 4]; // claims 2x2 but only holds 1 pixel
         assert!(bgra_to_rgba(2, 2, &bgra, None).is_err());
-    }
-
-    #[test]
-    fn encodes_valid_png_signature() {
-        let rgba = vec![255u8, 0, 0, 255];
-        let png = encode_png(1, 1, &rgba).unwrap();
-        // PNG magic bytes.
-        assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
     }
 }

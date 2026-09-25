@@ -1,5 +1,10 @@
 import type { ScreenCapturePort } from '@/core/application/ports/screen-capture.port';
-import type { LlmPort, LlmMessage, LlmContentPart } from '@/core/application/ports/llm.port';
+import type {
+  LlmPort,
+  LlmMessage,
+  LlmContentPart,
+  LlmFinish,
+} from '@/core/application/ports/llm.port';
 import type { Agent } from '@/core/domain/agent';
 import type { ProgrammingLanguage } from '@/core/domain/language';
 import type { Screenshot } from '@/core/domain/screenshot';
@@ -22,6 +27,18 @@ export interface AnalyzeScreenParams {
    * labeled data block in the user text alongside the screenshots. May be empty.
    */
   readonly transcript?: string;
+  /**
+   * The code as exact text (R15), sent as a numbered `<code_text>` block. When
+   * present and no screenshots are staged, NO fresh capture is taken — the
+   * request is text-only (the user explicitly gave the code as text).
+   */
+  readonly codeText?: string;
+  /**
+   * Called with the terminal `finish` chunk (usage, cost, serving model,
+   * finish reason) so the HUD can show it (R9/R19). The text stream itself
+   * only carries deltas.
+   */
+  readonly onFinish?: (finish: LlmFinish) => void;
   readonly signal?: AbortSignal;
   /**
    * The staged screenshot batch to analyze as one unit (phase 8). The capture
@@ -32,7 +49,8 @@ export interface AnalyzeScreenParams {
    *
    * When omitted or empty, the runner falls back to capturing a single fresh
    * screenshot — preserving the pre-phase-8 one-shot ergonomics (and letting
-   * callers that don't stage a batch, e.g. the integration test, still work).
+   * callers that don't stage a batch, e.g. the integration test, still work) —
+   * unless `codeText` is given, in which case the request is text-only.
    */
   readonly screenshots?: readonly Screenshot[];
 }
@@ -52,17 +70,22 @@ export class AgentRunner {
 
     // Analyze the staged batch; fall back to a single fresh capture when the
     // caller staged nothing (pre-phase-8 one-shot ergonomics — see the
-    // `screenshots` doc comment).
+    // `screenshots` doc comment) — except for a text-only code request.
+    const hasCode = Boolean(params.codeText?.trim());
     const shots =
       params.screenshots && params.screenshots.length > 0
         ? params.screenshots
-        : [await screenCapture.capture()];
+        : hasCode
+          ? []
+          : [await screenCapture.capture()];
 
     const { system, userText } = buildAgentPrompt({
       agent: params.agent,
       language: params.language,
       instructions: params.instructions,
       ...(params.transcript ? { transcript: params.transcript } : {}),
+      ...(hasCode ? { codeText: params.codeText } : {}),
+      screenshotCount: shots.length,
     });
 
     const messages: LlmMessage[] = [
@@ -82,12 +105,15 @@ export class AgentRunner {
     ];
 
     for await (const chunk of llm.stream({
+      // The agent declares its task weight; ResilientLlm resolves it (R11).
+      route: params.agent.modelRoute,
       messages,
       ...(params.signal ? { signal: params.signal } : {}),
     })) {
       if (chunk.type === 'text-delta') yield chunk.delta;
       else if (chunk.type === 'error') throw new Error(chunk.message);
-      // 'finish' carries reason/usage — nothing to emit to the text stream.
+      // 'finish' carries reason/usage/model — reported out-of-band, not as text.
+      else params.onFinish?.(chunk);
     }
   }
 }

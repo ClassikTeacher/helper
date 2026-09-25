@@ -98,6 +98,18 @@ pub struct LlmStreamRequest {
     /// OpenRouter model slug chosen by the resilient LLM layer (webview side).
     pub model: String,
     pub messages: Vec<LlmMessage>,
+    /// Sampling temperature; `None` = not sent (provider default). Per route,
+    /// chosen by the webview (R16). `f64` so `0.3` serializes as `0.3`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    /// OpenRouter `reasoning.effort` ("low" | "medium" | "high"); `None` = no
+    /// reasoning requested (R16).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    /// Longest image edge in px; larger images are area-downscaled before the
+    /// request (R4/R17). `None` = send as captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_image_edge: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -105,6 +117,9 @@ pub struct LlmStreamRequest {
 pub struct LlmUsage {
     pub input_tokens: u32,
     pub output_tokens: u32,
+    /// USD cost reported by OpenRouter (`usage.cost`), when present (R9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<f64>,
 }
 
 /// Discriminated union streamed over `Channel<LlmChunk>`; terminal chunk is
@@ -119,6 +134,9 @@ pub enum LlmChunk {
         reason: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         usage: Option<LlmUsage>,
+        /// Model slug the provider reports as having served the request (R19).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
     },
     Error {
         message: String,
@@ -208,5 +226,42 @@ mod tests {
         let value = serde_json::to_value(&part).unwrap();
         assert_eq!(value["kind"], "image");
         assert_eq!(value["imageBase64"], "QUJD");
+    }
+
+    #[test]
+    fn request_profile_fields_are_optional_and_camel_case() {
+        // Old webviews (no profile fields) must still deserialize.
+        let bare: LlmStreamRequest =
+            serde_json::from_str(r#"{ "model": "m", "messages": [] }"#).unwrap();
+        assert_eq!(bare.temperature, None);
+        assert_eq!(bare.reasoning_effort, None);
+        assert_eq!(bare.max_image_edge, None);
+
+        let full: LlmStreamRequest = serde_json::from_str(
+            r#"{ "model": "m", "messages": [], "temperature": 0.3,
+                 "reasoningEffort": "medium", "maxImageEdge": 2576 }"#,
+        )
+        .unwrap();
+        assert_eq!(full.temperature, Some(0.3));
+        assert_eq!(full.reasoning_effort.as_deref(), Some("medium"));
+        assert_eq!(full.max_image_edge, Some(2576));
+    }
+
+    #[test]
+    fn finish_chunk_serializes_model_and_cost_in_camel_case() {
+        let chunk = LlmChunk::Finish {
+            reason: "stop".to_string(),
+            usage: Some(LlmUsage {
+                input_tokens: 1,
+                output_tokens: 2,
+                cost: Some(0.5),
+            }),
+            model: Some("anthropic/claude-haiku-4.5".to_string()),
+        };
+        let value = serde_json::to_value(&chunk).unwrap();
+        assert_eq!(value["type"], "finish");
+        assert_eq!(value["usage"]["inputTokens"], 1);
+        assert_eq!(value["usage"]["cost"], 0.5);
+        assert_eq!(value["model"], "anthropic/claude-haiku-4.5");
     }
 }

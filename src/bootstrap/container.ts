@@ -1,5 +1,5 @@
 import { ResilientLlm } from '@/core/application/services/resilient-llm';
-import { buildModelChain } from './model-chain';
+import { buildModelRoutes } from './model-chain';
 import { AgentRunner } from '@/core/application/services/agent-runner';
 import { AnalyzeScreenshotUseCase } from '@/core/application/use-cases/analyze-screenshot.use-case';
 import { CaptureScreenshotUseCase } from '@/core/application/use-cases/capture-screenshot.use-case';
@@ -12,6 +12,7 @@ import type { LlmPort } from '@/core/application/ports/llm.port';
 import type { ScreenCapturePort } from '@/core/application/ports/screen-capture.port';
 import type { OverlayPort } from '@/core/application/ports/overlay.port';
 import type { HotkeyPort } from '@/core/application/ports/hotkey.port';
+import type { ClipboardPort } from '@/core/application/ports/clipboard.port';
 import type { SecretsPort } from '@/core/application/ports/secrets.port';
 import type { StoragePort } from '@/core/application/ports/storage.port';
 import type { ConversationRepository } from '@/core/application/ports/conversation.repository';
@@ -23,6 +24,7 @@ import { TauriHotkeyAdapter } from '@/infrastructure/tauri/tauri-hotkey.adapter'
 import { TauriLlmAdapter } from '@/infrastructure/tauri/tauri-llm.adapter';
 import { TauriSecretsAdapter } from '@/infrastructure/tauri/tauri-secrets.adapter';
 import { TauriAudioAdapter } from '@/infrastructure/tauri/tauri-audio.adapter';
+import { TauriClipboardAdapter } from '@/infrastructure/tauri/tauri-clipboard.adapter';
 import { OpenRouterLlmAdapter } from '@/infrastructure/llm/openrouter-llm.adapter';
 import { TauriStorageAdapter } from '@/infrastructure/persistence/tauri-storage.adapter';
 import { SqliteConversationRepository } from '@/infrastructure/persistence/sqlite-conversation.repository';
@@ -50,7 +52,7 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
   // outage / unavailable model transparently falls over to the next model in
   // the chain (see ResilientLlm). An explicit `llm` override bypasses failover
   // (tests inject exactly the adapter they want).
-  const llm: LlmPort = overrides.llm ?? new ResilientLlm(selectLlm(isTauri), buildModelChain());
+  const llm: LlmPort = overrides.llm ?? new ResilientLlm(selectLlm(isTauri), buildModelRoutes());
 
   const secrets: SecretsPort =
     overrides.secrets ?? (isTauri ? new TauriSecretsAdapter() : new InMemorySecretsAdapter());
@@ -79,6 +81,8 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
 
   const overlay: OverlayPort = overrides.overlay ?? (isTauri ? new TauriOverlayAdapter() : noopOverlay);
   const hotkey: HotkeyPort = overrides.hotkey ?? (isTauri ? new TauriHotkeyAdapter() : noopHotkey);
+  const clipboard: ClipboardPort =
+    overrides.clipboard ?? (isTauri ? new TauriClipboardAdapter() : browserClipboard);
 
   return {
     useCases: {
@@ -89,7 +93,7 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
       recordConversation: new RecordConversationUseCase(conversations),
       transcribeAudio: new TranscribeAudioUseCase(audio),
     },
-    platform: { overlay, hotkey },
+    platform: { overlay, hotkey, clipboard },
     persistence: {
       // Only the real SQLite path needs migrations; in-memory repos have no
       // schema. Runs on startup (see main.tsx).
@@ -120,6 +124,17 @@ const noopOverlay: OverlayPort = {
   hide: async () => {},
   toggle: async () => {},
   isVisible: async () => false,
+};
+
+/** Browser (`pnpm dev`) clipboard: the web API, empty when denied/unavailable. */
+const browserClipboard: ClipboardPort = {
+  readText: async () => {
+    try {
+      return (await navigator.clipboard?.readText()) ?? '';
+    } catch {
+      return '';
+    }
+  },
 };
 
 const noopHotkey: HotkeyPort = {

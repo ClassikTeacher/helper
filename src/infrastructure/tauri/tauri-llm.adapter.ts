@@ -109,6 +109,9 @@ function toStreamRequestDto(request: LlmStreamRequest): LlmStreamRequestDto {
   return {
     model: request.model,
     messages: request.messages.map(toMessageDto),
+    ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+    ...(request.reasoningEffort ? { reasoningEffort: request.reasoningEffort } : {}),
+    ...(request.maxImageEdge !== undefined ? { maxImageEdge: request.maxImageEdge } : {}),
   };
 }
 
@@ -127,7 +130,12 @@ function fromChunkDto(dto: LlmChunkDto): LlmChunk {
     case 'text-delta':
       return { type: 'text-delta', delta: dto.delta };
     case 'finish':
-      return { type: 'finish', reason: dto.reason, ...(dto.usage ? { usage: dto.usage } : {}) };
+      return {
+        type: 'finish',
+        reason: dto.reason,
+        ...(dto.usage ? { usage: dto.usage } : {}),
+        ...(dto.model ? { model: dto.model } : {}),
+      };
     case 'error':
       return { type: 'error', message: dto.message, retryable: dto.retryable };
   }

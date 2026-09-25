@@ -112,3 +112,27 @@ describe('hud.store audio recording (phase 9)', () => {
     expect(s.transcript).toBe('');
   });
 });
+
+describe('hud.store code text + run info (R15, R9/R19)', () => {
+  it('stores the staged code text and reset clears it', () => {
+    useHudStore.getState().setCodeText('x := 1');
+    expect(useHudStore.getState().codeText).toBe('x := 1');
+
+    useHudStore.getState().reset();
+    expect(useHudStore.getState().codeText).toBe('');
+  });
+
+  it('startStreaming clears the previous run info; setLastRun stores the new one', () => {
+    useHudStore.getState().setLastRun({ model: 'm', fallback: false, reason: 'stop' });
+    useHudStore.getState().startStreaming();
+    expect(useHudStore.getState().lastRun).toBeNull();
+
+    useHudStore.getState().setLastRun({ model: 'b', fallback: true, reason: 'length', cost: 0.01 });
+    expect(useHudStore.getState().lastRun).toEqual({
+      model: 'b',
+      fallback: true,
+      reason: 'length',
+      cost: 0.01,
+    });
+  });
+});

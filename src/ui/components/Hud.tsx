@@ -6,9 +6,11 @@ import { useApiKeySettings } from '@/ui/hooks/useApiKeySettings';
 import { AGENT_LIST, resolveAgent } from '@/core/domain/agents-catalog';
 import { AgentSwitch } from './AgentSwitch';
 import { AudioControls } from './AudioControls';
+import { CodeTextInput } from './CodeTextInput';
 import { LanguageSelect } from './LanguageSelect';
 import { MessageList } from './MessageList';
 import { PromptInput } from './PromptInput';
+import { RunInfoLine } from './RunInfoLine';
 import { ScreenshotStrip } from './ScreenshotStrip';
 import { SettingsPanel } from './SettingsPanel';
 
@@ -29,6 +31,9 @@ export function Hud() {
   const recording = useHudStore((s) => s.recording);
   const transcribing = useHudStore((s) => s.transcribing);
   const transcript = useHudStore((s) => s.transcript);
+  const codeText = useHudStore((s) => s.codeText);
+  const lastRun = useHudStore((s) => s.lastRun);
+  const setCodeText = useHudStore((s) => s.setCodeText);
   const setAgentId = useHudStore((s) => s.setAgentId);
   const setLanguage = useHudStore((s) => s.setLanguage);
   const setInstructions = useHudStore((s) => s.setInstructions);
@@ -109,6 +114,7 @@ export function Hud() {
         onRemove={removeScreenshot}
         onClear={clearScreenshots}
       />
+      <CodeTextInput value={codeText} disabled={streaming} onChange={setCodeText} />
       <AudioControls
         recording={recording}
         transcribing={transcribing}
@@ -125,6 +131,7 @@ export function Hud() {
       )}
       <div className="mb-3 max-h-[320px] overflow-y-auto">
         <MessageList answer={answer} streaming={streaming} error={error} />
+        <RunInfoLine info={lastRun} />
       </div>
       <PromptInput
         value={instructions}

@@ -26,6 +26,7 @@ beforeEach(() => {
     error: null,
     instructions: '',
     activeHint: '',
+    codeText: '',
   });
 });
 
@@ -44,7 +45,7 @@ describe('useAnalyzeScreenshot', () => {
     });
 
     expect(useHudStore.getState().error).toBe(
-      'Нет скриншотов для анализа — сделайте хотя бы один (хоткей захвата).',
+      'Нет данных для анализа — сделайте хотя бы один скриншот (хоткей захвата) или вставьте код текстом.',
     );
     expect(useHudStore.getState().answer).toBe('');
   });
@@ -128,5 +129,49 @@ describe('useAnalyzeScreenshot', () => {
     expect(useHudStore.getState().error).toBe('provider down');
     expect(useHudStore.getState().instructions).toBe('  use React  ');
     expect(useHudStore.getState().activeHint).toBe('use React');
+  });
+});
+
+describe('code text lifecycle (R15)', () => {
+  it('keeps code staged DURING the run (paste-code hotkey) instead of wiping it on finish', async () => {
+    // Regression (review): only the code this run sent is consumed.
+    let resolveGate!: () => void;
+    const gate = new Promise<void>((r) => {
+      resolveGate = r;
+    });
+    const llm: LlmPort = {
+      async *stream() {
+        await gate;
+        yield { type: 'text-delta', delta: 'ok' };
+        yield { type: 'finish', reason: 'stop' };
+      },
+    };
+    const container = createContainer({ llm, screenCapture: new FakeScreenCaptureAdapter() });
+    useHudStore.setState({ codeText: 'first', screenshots: [], recording: false });
+    const { result } = renderHook(() => useAnalyzeScreenshot(), { wrapper: wrapperWithContainer(container) });
+
+    let run!: Promise<void>;
+    act(() => {
+      run = result.current();
+    });
+    useHudStore.getState().setCodeText('second — staged mid-run');
+    resolveGate();
+    await act(async () => {
+      await run;
+    });
+
+    expect(useHudStore.getState().codeText).toBe('second — staged mid-run');
+  });
+
+  it('consumes the code the run sent', async () => {
+    const container = createContainer({ llm: new FakeLlmAdapter('ok'), screenCapture: new FakeScreenCaptureAdapter() });
+    useHudStore.setState({ codeText: 'x := 1', screenshots: [], recording: false });
+    const { result } = renderHook(() => useAnalyzeScreenshot(), { wrapper: wrapperWithContainer(container) });
+
+    await act(async () => {
+      await result.current();
+    });
+
+    expect(useHudStore.getState().codeText).toBe('');
   });
 });

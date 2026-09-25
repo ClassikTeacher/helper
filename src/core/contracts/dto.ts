@@ -82,17 +82,31 @@ export interface LlmStreamRequestDto {
   /** OpenRouter model slug chosen by the resilient LLM layer (webview side). */
   readonly model: string;
   readonly messages: readonly LlmMessageDto[];
+  /** Sampling temperature; omitted = not sent to the provider (R16). */
+  readonly temperature?: number;
+  /** OpenRouter `reasoning.effort` ('low'|'medium'|'high'); omitted = no reasoning (R16). */
+  readonly reasoningEffort?: string;
+  /** Longest image edge in px; native downscales larger images before sending (R4/R17). */
+  readonly maxImageEdge?: number;
 }
 
 export interface LlmUsageDto {
   readonly inputTokens: number;
   readonly outputTokens: number;
+  /** USD cost reported by OpenRouter (`usage.cost`), when present. */
+  readonly cost?: number;
 }
 
 /** Discriminated union streamed over the Channel; terminal chunk is finish|error. */
 export type LlmChunkDto =
   | { readonly type: 'text-delta'; readonly delta: string }
-  | { readonly type: 'finish'; readonly reason: string; readonly usage?: LlmUsageDto }
+  | {
+      readonly type: 'finish';
+      readonly reason: string;
+      readonly usage?: LlmUsageDto;
+      /** Model slug the provider reports as having served the request (R19). */
+      readonly model?: string;
+    }
   // `retryable` tells the webview whether to fail over to the next model in the
   // chain (transient/provider-side error) or surface the failure as-is (missing
   // key, auth, bad request). Mirrors `LlmChunk::Error.retryable` in dto.rs.

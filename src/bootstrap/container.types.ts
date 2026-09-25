@@ -6,6 +6,7 @@ import type { RecordConversationUseCase } from '@/core/application/use-cases/rec
 import type { TranscribeAudioUseCase } from '@/core/application/use-cases/transcribe-audio.use-case';
 import type { AudioTranscriptionPort } from '@/core/application/ports/audio-transcription.port';
 import type { OverlayPort } from '@/core/application/ports/overlay.port';
+import type { ClipboardPort } from '@/core/application/ports/clipboard.port';
 import type { HotkeyPort } from '@/core/application/ports/hotkey.port';
 import type { LlmPort } from '@/core/application/ports/llm.port';
 import type { ScreenCapturePort } from '@/core/application/ports/screen-capture.port';
@@ -31,6 +32,8 @@ export interface AppContainer {
   readonly platform: {
     readonly overlay: OverlayPort;
     readonly hotkey: HotkeyPort;
+    /** Clipboard text for the paste-code hotkey (R15). */
+    readonly clipboard: ClipboardPort;
   };
   readonly persistence: {
     /** Apply pending DB migrations. No-op on the in-memory (browser/test) path. */
@@ -48,4 +51,5 @@ export interface ContainerOverrides {
   readonly storage?: StoragePort;
   readonly conversationRepository?: ConversationRepository;
   readonly audio?: AudioTranscriptionPort;
+  readonly clipboard?: ClipboardPort;
 }

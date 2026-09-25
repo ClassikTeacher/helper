@@ -14,6 +14,8 @@ export interface AnalyzeAndStreamParams {
   readonly instructions: string;
   /** The staged screenshot batch to analyze (phase 8); empty/omitted → the use-case captures one fresh. */
   readonly screenshots?: readonly Screenshot[];
+  /** The code as exact text (R15); with no screenshots the request is text-only. */
+  readonly codeText?: string;
 }
 
 /**
@@ -45,17 +47,38 @@ export async function analyzeAndStream(
     // carries `params.instructions`, so it doesn't affect what's sent.
     useHudStore.getState().setActiveHint(params.instructions.trim());
 
-    for await (const delta of useCases.analyzeScreenshot.execute({ ...params, transcript })) {
+    for await (const delta of useCases.analyzeScreenshot.execute({
+      ...params,
+      transcript,
+      onFinish: (finish) =>
+        useHudStore.getState().setLastRun({
+          ...(finish.model ? { model: finish.model } : {}),
+          fallback: finish.fallback ?? false,
+          reason: finish.reason,
+          ...(finish.usage
+            ? {
+                inputTokens: finish.usage.inputTokens,
+                outputTokens: finish.usage.outputTokens,
+                ...(finish.usage.cost !== undefined ? { cost: finish.usage.cost } : {}),
+              }
+            : {}),
+        }),
+    })) {
       useHudStore.getState().appendAnswer(delta);
     }
     useHudStore.getState().finishStreaming();
 
-    // Clear the live input only now that the hint has been successfully
-    // applied, so it never silently sticks to the NEXT screenshot (user
-    // decision 2026-07-04). Deliberately NOT done before the run: a FAILED
-    // run keeps the input intact so the user can just hit Run again instead of
-    // retyping the hint (the request captured `params.instructions` already).
+    // Clear the live inputs only now that they have been successfully
+    // applied, so neither the hint nor the pasted code silently sticks to the
+    // NEXT batch (user decision 2026-07-04; R15). Deliberately NOT done before
+    // the run: a FAILED run keeps them intact so the user can just hit Run
+    // again (the request captured `params` already).
     useHudStore.getState().setInstructions('');
+    // Only if it is still the code this run sent: the paste-code hotkey works
+    // while an answer streams, and code staged for the NEXT question must survive.
+    if (useHudStore.getState().codeText === (params.codeText ?? '')) {
+      useHudStore.getState().setCodeText('');
+    }
 
     // Persist the completed exchange (phase 4). Best-effort: a storage failure
     // must NOT break the answer already streamed to the user, so it's caught

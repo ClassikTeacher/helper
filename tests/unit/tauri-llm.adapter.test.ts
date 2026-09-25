@@ -72,6 +72,45 @@ describe('TauriLlmAdapter', () => {
     );
   });
 
+  it('forwards route-profile parameters and maps the served model on finish (R16/R19)', async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      lastChannel!.emit({
+        type: 'finish',
+        reason: 'length',
+        usage: { inputTokens: 5, outputTokens: 7, cost: 0.001 },
+        model: 'anthropic/claude-sonnet-5',
+      });
+    });
+
+    const chunks = await collect(
+      new TauriLlmAdapter().stream({
+        ...REQUEST,
+        temperature: 0.3,
+        reasoningEffort: 'medium',
+        maxImageEdge: 2576,
+      }),
+    );
+
+    expect(invoke).toHaveBeenCalledWith(
+      IPC_COMMANDS.llmStream,
+      expect.objectContaining({
+        request: expect.objectContaining({
+          temperature: 0.3,
+          reasoningEffort: 'medium',
+          maxImageEdge: 2576,
+        }),
+      }),
+    );
+    expect(chunks).toEqual([
+      {
+        type: 'finish',
+        reason: 'length',
+        usage: { inputTokens: 5, outputTokens: 7, cost: 0.001 },
+        model: 'anthropic/claude-sonnet-5',
+      },
+    ]);
+  });
+
   it('yields text-delta chunks as they arrive, before the command resolves', async () => {
     let resolveInvoke!: () => void;
     (invoke as ReturnType<typeof vi.fn>).mockImplementation(

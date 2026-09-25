@@ -106,6 +106,49 @@ describe('AgentRunner.analyzeScreen', () => {
     expect(userText?.kind === 'text' && userText.text).toContain('use React');
   });
 
+  it('sends pasted code as text and skips the fresh capture when nothing is staged (R15)', async () => {
+    const screenCapture = new FakeScreenCaptureAdapter();
+    const captureSpy = vi.spyOn(screenCapture, 'capture');
+    const llm = new FakeLlmAdapter('ok');
+    const streamSpy = vi.spyOn(llm, 'stream');
+    const runner = new AgentRunner({ screenCapture, llm });
+
+    await drain(runner.analyzeScreen(solverParams({ agent: AGENTS.reviewer, codeText: 'x := 1' })));
+
+    expect(captureSpy).not.toHaveBeenCalled();
+    const parts = streamSpy.mock.calls[0]?.[0].messages.find((m) => m.role === 'user')?.parts ?? [];
+    expect(parts).toHaveLength(1);
+    expect(parts[0]?.kind === 'text' && parts[0].text).toContain('<code_text>\n1| x := 1\n</code_text>');
+  });
+
+  it('keeps the staged screenshots alongside pasted code', async () => {
+    const llm = new FakeLlmAdapter('ok');
+    const streamSpy = vi.spyOn(llm, 'stream');
+    const runner = new AgentRunner({ screenCapture: new FakeScreenCaptureAdapter(), llm });
+
+    await drain(
+      runner.analyzeScreen(solverParams({ codeText: 'x', screenshots: [PINNED_SCREENSHOT] })),
+    );
+
+    const parts = streamSpy.mock.calls[0]?.[0].messages.find((m) => m.role === 'user')?.parts ?? [];
+    expect(parts.map((p) => p.kind)).toEqual(['image', 'text']);
+  });
+
+  it("passes the agent's route (R11) and reports the finish chunk out-of-band (R19)", async () => {
+    const llm = new FakeLlmAdapter('ok');
+    const streamSpy = vi.spyOn(llm, 'stream');
+    const onFinish = vi.fn();
+    const runner = new AgentRunner({ screenCapture: new FakeScreenCaptureAdapter(), llm });
+
+    const text = await drain(
+      runner.analyzeScreen(solverParams({ agent: AGENTS.reviewer, onFinish })),
+    );
+
+    expect(streamSpy.mock.calls[0]?.[0].route).toBe('heavy');
+    expect(onFinish).toHaveBeenCalledWith(expect.objectContaining({ type: 'finish', reason: 'stop' }));
+    expect(text).toBe('ok ');
+  });
+
   it("does not choose a model — that is the resilient LLM layer's job", async () => {
     // AgentRunner no longer selects a model; it leaves `model` unset and the
     // ResilientLlm decorator fills it per attempt.
