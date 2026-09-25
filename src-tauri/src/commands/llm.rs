@@ -47,17 +47,26 @@ pub async fn llm_stream(
     };
 
     // Per-request image cap (R4/R17): decode/resample/encode is CPU work, so
-    // it runs off the async runtime. A failed join (panic) falls back to the
-    // original request — an oversized image is better than no answer.
+    // it runs off the async runtime. The closure always hands the request back
+    // (a panicking image worker is contained inside `downscale_request_images`),
+    // so no defensive clone of the multi-MB request is needed.
     let request = if request.max_image_edge.is_some() {
-        let original = request.clone();
-        tauri::async_runtime::spawn_blocking(move || {
+        match tauri::async_runtime::spawn_blocking(move || {
             let mut request = request;
             downscale_request_images(&mut request);
             request
         })
         .await
-        .unwrap_or(original)
+        {
+            Ok(request) => request,
+            Err(e) => {
+                let _ = channel.send(LlmChunk::Error {
+                    message: format!("image preparation failed: {e}"),
+                    retryable: false,
+                });
+                return Ok(());
+            }
+        }
     } else {
         request
     };

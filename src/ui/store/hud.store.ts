@@ -85,6 +85,12 @@ interface HudState {
   appendAnswer(delta: string): void;
   finishStreaming(): void;
   fail(message: string): void;
+  /**
+   * Show an error WITHOUT the terminal side effects of `fail` (which also stops
+   * the streaming/recording/transcribing indicators). For hotkey feedback that
+   * must not disturb a run or a recording in progress.
+   */
+  setError(message: string | null): void;
   /** Append a screenshot to the batch (no-op once `MAX_SCREENSHOTS` is reached). */
   addScreenshot(screenshot: Screenshot): void;
   /** Drop the screenshot at `index` from the batch. */
@@ -135,6 +141,7 @@ export const useHudStore = create<HudState>((set) => ({
   // запись"/"расшифровка…" indicators stuck on when nothing is actually running.
   fail: (message) =>
     set({ streaming: false, recording: false, transcribing: false, error: message }),
+  setError: (message) => set({ error: message }),
   addScreenshot: (screenshot) =>
     set((s) =>
       // Cap the batch: ignore extra captures past the limit rather than

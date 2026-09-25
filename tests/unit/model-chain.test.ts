@@ -93,12 +93,15 @@ describe('buildModelRoutes (R11/R16)', () => {
     expect(routes.light.chain).toEqual(['vendor/base', 'vendor/fb']);
   });
 
-  it('keeps the base fallbacks when only a route primary is overridden', () => {
+  it('keeps the WHOLE base chain as fallbacks when only a route primary is overridden', () => {
+    // Regression (review): the base primary — even when also listed as a
+    // fallback — must stay in the chain, or an outage of the route primary
+    // falls straight through to the weakest model.
     vi.stubEnv('VITE_DEFAULT_MODEL', 'vendor/base');
-    vi.stubEnv('VITE_MODEL_FALLBACKS', 'vendor/fb');
+    vi.stubEnv('VITE_MODEL_FALLBACKS', 'vendor/base,vendor/fb');
     vi.stubEnv('VITE_HEAVY_MODEL', 'vendor/deep');
 
-    expect(buildModelRoutes().heavy.chain).toEqual(['vendor/deep', 'vendor/fb']);
+    expect(buildModelRoutes().heavy.chain).toEqual(['vendor/deep', 'vendor/base', 'vendor/fb']);
   });
 });
 

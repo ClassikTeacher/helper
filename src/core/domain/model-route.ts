@@ -97,13 +97,25 @@ export interface RouteRequestParams {
  * so reasoning wins and the temperature is dropped.
  */
 export function requestParamsFor(profile: RouteProfile): RouteRequestParams {
-  if (profile.reasoningEffort) {
-    return { reasoningEffort: profile.reasoningEffort, maxImageEdge: profile.maxImageEdge };
-  }
-  return {
+  return withSamplingRule({
     ...(profile.temperature !== undefined ? { temperature: profile.temperature } : {}),
+    ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
     maxImageEdge: profile.maxImageEdge,
-  };
+  });
+}
+
+/**
+ * THE single place of the reasoning-vs-temperature rule: when reasoning is
+ * requested, any temperature is dropped. Applied to the final, merged request
+ * parameters (`ResilientLlm`), so profile values and explicit caller values
+ * obey the same rule on every path (native, dev adapter, eval).
+ */
+export function withSamplingRule<T extends { temperature?: number; reasoningEffort?: ReasoningEffort }>(
+  params: T,
+): T {
+  if (!params.reasoningEffort || params.temperature === undefined) return params;
+  const { temperature: _temperature, ...rest } = params;
+  return rest as T;
 }
 
 /**

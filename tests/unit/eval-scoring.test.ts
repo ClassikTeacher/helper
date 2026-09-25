@@ -114,6 +114,11 @@ describe('checkAnchors on the real 2026-08-27 baseline answers (R14 evidence)', 
     expect(anchorValidity(stats)).toBe(0.5);
   });
 
+  it('does not read words like "pipeline 2" or "inline 3" as line references', () => {
+    const stats = checkAnchors('The pipeline 2 stages and inline 3 checks use http.NewRequest.', goSource);
+    expect(stats.lines.total).toBe(0);
+  });
+
   it('returns null validity when there is nothing checkable', () => {
     expect(anchorValidity(checkAnchors('Код хороший.', goSource))).toBeNull();
   });

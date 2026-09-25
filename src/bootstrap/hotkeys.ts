@@ -104,7 +104,9 @@ async function pasteCodeFromClipboard(container: HotkeysContainer): Promise<void
   if (text.trim()) {
     useHudStore.getState().setCodeText(text);
   } else {
-    useHudStore.getState().fail('Буфер обмена не содержит текста — скопируйте код и повторите.');
+    // `setError`, not `fail`: the hotkey may fire during a recording or a
+    // streaming answer, and must not flip their indicators off.
+    useHudStore.getState().setError('Буфер обмена не содержит текста — скопируйте код и повторите.');
   }
   await container.platform.overlay.show();
 }

@@ -74,7 +74,11 @@ export async function analyzeAndStream(
     // the run: a FAILED run keeps them intact so the user can just hit Run
     // again (the request captured `params` already).
     useHudStore.getState().setInstructions('');
-    useHudStore.getState().setCodeText('');
+    // Only if it is still the code this run sent: the paste-code hotkey works
+    // while an answer streams, and code staged for the NEXT question must survive.
+    if (useHudStore.getState().codeText === (params.codeText ?? '')) {
+      useHudStore.getState().setCodeText('');
+    }
 
     // Persist the completed exchange (phase 4). Best-effort: a storage failure
     // must NOT break the answer already streamed to the user, so it's caught

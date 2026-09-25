@@ -161,6 +161,23 @@ describe('registerHotkeys', () => {
     expect(useHudStore.getState().error).toContain('Буфер обмена не содержит текста');
   });
 
+  it('paste-code with an empty clipboard does not stop a recording in progress', async () => {
+    // Regression (review): the feedback must not go through `fail`, which
+    // would flip `recording` off while the native recorder keeps running.
+    const hotkey = new FakeHotkeyPort();
+    await registerHotkeys(
+      createContainer(hotkey, createFakeOverlay(), undefined, undefined, undefined, createFakeClipboard('')),
+    );
+    useHudStore.setState({ recording: true, streaming: true });
+
+    hotkey.press(PASTE_CODE_ACCELERATOR);
+    await flush();
+
+    expect(useHudStore.getState().recording).toBe(true);
+    expect(useHudStore.getState().streaming).toBe(true);
+    expect(useHudStore.getState().error).toContain('Буфер обмена');
+  });
+
   it('send with staged code and no screenshots runs a text-only request and consumes the code', async () => {
     const hotkey = new FakeHotkeyPort();
     const overlay = createFakeOverlay();

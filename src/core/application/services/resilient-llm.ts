@@ -3,6 +3,7 @@ import {
   DEFAULT_MAX_IMAGE_EDGE,
   DEFAULT_ROUTE,
   requestParamsFor,
+  withSamplingRule,
   type ModelSlug,
   type RouteProfile,
   type RouteProfiles,
@@ -55,17 +56,12 @@ export class ResilientLlm implements LlmPort {
     // eval harness sweeps them). `route` is consumed here — adapters below
     // only ever see a concrete model + parameters.
     const { route: _route, ...rest } = request;
-    const merged: LlmStreamRequest = {
+    // The reasoning-vs-temperature rule is applied once, to the merged result.
+    const base: LlmStreamRequest = withSamplingRule({
       ...params,
       ...stripUndefined(rest),
       messages: request.messages,
-    };
-    // Keep the reasoning-vs-temperature rule when the caller adds reasoning to
-    // a temperature profile: a profile temperature must not ride along.
-    const base: LlmStreamRequest =
-      merged.reasoningEffort && request.temperature === undefined
-        ? withoutTemperature(merged)
-        : merged;
+    });
 
     // A caller-supplied model (rare — tests/dev) becomes the first attempt,
     // then the configured chain follows as fallbacks; otherwise use the chain
@@ -82,7 +78,9 @@ export class ResilientLlm implements LlmPort {
           produced = true;
           yield chunk;
         } else if (chunk.type === 'finish') {
-          yield { ...chunk, model: chunk.model ?? model, fallback: i > 0 };
+          // A fallback = neither what the caller asked for nor the route's primary.
+          const fallback = model !== chain[0] && model !== profile.chain[0];
+          yield { ...chunk, model: chunk.model ?? model, fallback };
           return;
         } else {
           // error chunk
@@ -117,11 +115,6 @@ function normalizeProfile(profile: RouteProfile): RouteProfile {
     throw new Error('ResilientLlm requires a non-empty model chain for every route');
   }
   return { ...profile, chain };
-}
-
-function withoutTemperature(request: LlmStreamRequest): LlmStreamRequest {
-  const { temperature: _temperature, ...rest } = request;
-  return rest;
 }
 
 /** Drops keys whose value is `undefined`, so they don't override profile values. */

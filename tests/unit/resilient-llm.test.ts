@@ -124,7 +124,8 @@ describe('ResilientLlm', () => {
     const chunks = await collect(llm.stream({ model: 'A', messages: [] }));
 
     expect(inner.attempts).toEqual(['A', 'B']);
-    expect(chunks).toEqual([served('B', true)]);
+    // B is the configured primary — not a fallback, even though it was tried second.
+    expect(chunks).toEqual([served('B', false)]);
   });
 
   it('rejects an empty model chain at construction', () => {
@@ -196,6 +197,26 @@ describe('ResilientLlm routes and request profiles (R11/R16)', () => {
     const chunks = await collect(new ResilientLlm(inner, PROFILES).stream({ messages: [] }));
 
     expect(chunks).toEqual([served('fast/a-2026-01-01')]);
+  });
+
+  it("does not flag the route's own primary as a fallback after a caller model fails over", async () => {
+    const inner = new ScriptedLlm({
+      'caller/x': [err('x down', true)],
+      'fast/a': [finish()],
+    });
+    const chunks = await collect(
+      new ResilientLlm(inner, PROFILES).stream({ model: 'caller/x', messages: [] }),
+    );
+    expect(chunks).toEqual([served('fast/a', false)]);
+  });
+
+  it('drops an explicit temperature too when reasoning is on (one rule for every path)', async () => {
+    const inner = new RecordingLlm();
+    await collect(
+      new ResilientLlm(inner, PROFILES).stream({ messages: [], temperature: 0.9, reasoningEffort: 'low' }),
+    );
+    expect(inner.requests[0]).not.toHaveProperty('temperature');
+    expect(inner.requests[0]).toMatchObject({ reasoningEffort: 'low' });
   });
 
   it('rejects a route profile with an empty chain', () => {

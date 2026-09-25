@@ -46,7 +46,7 @@ export function buildModelChain(): ModelSlug[] {
  * the same chain and parameters — a seam, not a behavior switch:
  *
  *   VITE_{LIGHT,HEAVY}_MODEL              primary (default: VITE_DEFAULT_MODEL)
- *   VITE_{LIGHT,HEAVY}_MODEL_FALLBACKS    fallbacks (default: VITE_MODEL_FALLBACKS)
+ *   VITE_{LIGHT,HEAVY}_MODEL_FALLBACKS    fallbacks (default: the whole base chain)
  *   VITE_{LIGHT,HEAVY}_TEMPERATURE        number, or "off" to not send it (default 0.3)
  *   VITE_{LIGHT,HEAVY}_REASONING          off | low | medium | high (default off)
  *   VITE_{LIGHT,HEAVY}_MAX_IMAGE_EDGE     px, 512–2576 (default 1568)
@@ -65,7 +65,9 @@ type RoutePrefix = Uppercase<ModelRoute>;
 function buildRoute(prefix: RoutePrefix, base: readonly ModelSlug[]): RouteProfile {
   const env = import.meta.env;
   const primary = pick(env[`VITE_${prefix}_MODEL`], base[0] ?? DEFAULT_MODEL);
-  const fallbacks = parseList(env[`VITE_${prefix}_MODEL_FALLBACKS`]) ?? base.slice(1);
+  // Default fallbacks = the WHOLE base chain (the route primary is deduped
+  // out), so overriding only the route primary never drops the base primary.
+  const fallbacks = parseList(env[`VITE_${prefix}_MODEL_FALLBACKS`]) ?? base;
   const temperature = parseTemperature(env[`VITE_${prefix}_TEMPERATURE`]);
   const reasoningEffort = parseReasoning(env[`VITE_${prefix}_REASONING`]);
   return {

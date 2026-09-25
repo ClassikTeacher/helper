@@ -248,14 +248,22 @@ struct StreamState {
     finish_reason: Option<String>,
     usage: Option<LlmUsage>,
     model: Option<String>,
+    /// Whether any text delta was sent — an empty stream is a provider failure.
+    produced: bool,
 }
 
 impl StreamState {
     fn step(&mut self, outcome: SseOutcome) -> Step {
         match outcome {
             SseOutcome::None => Step { chunks: vec![], terminal: false },
-            // `[DONE]` ends the stream even if no finish_reason arrived.
-            SseOutcome::Done => Step { chunks: vec![self.finish("stop")], terminal: true },
+            // `[DONE]` ends the stream. Without a finish_reason it is still a
+            // normal end IF content arrived; an EMPTY stream is a provider
+            // failure — retryable, so ResilientLlm fails over (it only does so
+            // while nothing has been produced) instead of showing a blank answer.
+            SseOutcome::Done => Step {
+                chunks: vec![self.on_done()],
+                terminal: true,
+            },
             SseOutcome::Data(data) => {
                 if let Some(message) = data.error {
                     // Mid-stream provider error: retryable — ResilientLlm only
@@ -276,6 +284,7 @@ impl StreamState {
                 }
                 let mut chunks = Vec::new();
                 if let Some(delta) = data.delta {
+                    self.produced = true;
                     chunks.push(LlmChunk::TextDelta { delta });
                 }
                 // Usage is the last payload OpenRouter sends: once both the
@@ -289,7 +298,22 @@ impl StreamState {
         }
     }
 
-    /// The HTTP body ended without `[DONE]`.
+    /// `[DONE]` arrived: a normal end when a finish_reason or any content came
+    /// first; an EMPTY stream is a retryable provider failure.
+    fn on_done(&mut self) -> LlmChunk {
+        if self.finish_reason.is_some() || self.produced {
+            self.finish("stop")
+        } else {
+            LlmChunk::Error {
+                message: "OpenRouter stream ended without any content".to_string(),
+                retryable: true,
+            }
+        }
+    }
+
+    /// The HTTP body ended WITHOUT `[DONE]`: complete only if a finish_reason
+    /// was seen; otherwise the connection was cut — an error, even after
+    /// partial content (the HUD then shows "Interrupted").
     fn end_of_body(&mut self) -> LlmChunk {
         if self.finish_reason.is_some() {
             self.finish("stop")
@@ -568,6 +592,31 @@ mod tests {
                 usage: Some(usage(1, 2, Some(0.5))),
                 model: Some("m/served".to_string()),
             }]
+        );
+    }
+
+    #[test]
+    fn stream_state_treats_an_empty_stream_as_a_retryable_failure() {
+        // Regression (review): a bare `[DONE]` with no content and no reason
+        // must not count as success — ResilientLlm must be able to fail over.
+        let mut state = StreamState::default();
+        state.step(SseOutcome::Data(SseData {
+            model: Some("m".to_string()),
+            ..SseData::default()
+        }));
+        let done = state.step(SseOutcome::Done);
+        assert!(done.terminal);
+        assert!(matches!(done.chunks[..], [LlmChunk::Error { retryable: true, .. }]));
+    }
+
+    #[test]
+    fn stream_state_finishes_on_done_after_content_without_a_reason() {
+        let mut state = StreamState::default();
+        state.step(SseOutcome::Data(data(Some("x"), None)));
+        let done = state.step(SseOutcome::Done);
+        assert_eq!(
+            done.chunks,
+            vec![LlmChunk::Finish { reason: "stop".to_string(), usage: None, model: None }]
         );
     }
 

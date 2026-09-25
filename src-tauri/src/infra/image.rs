@@ -54,8 +54,14 @@ pub fn downscale_to_long_edge(
 /// under its footprint (fractional weights on the edges). Unlike bilinear
 /// sampling — which reads a 2×2 neighborhood and skips pixels once the factor
 /// exceeds 2× (4K → 1568 is ×2.45) — no source pixel is lost, so thin glyph
-/// strokes of code text fade instead of aliasing away. Separable: a horizontal
-/// pass, then a vertical pass.
+/// strokes of code text fade instead of aliasing away.
+///
+/// Streams row by row: for each output row, the covered source rows are
+/// horizontally resampled into a one-row scratch buffer and accumulated with
+/// their vertical weight. Memory is O(output width) instead of a full f32
+/// intermediate image (≈ 89 MB for 4K → 2576), and every pass walks memory
+/// sequentially. A source row shared by two output rows (fractional edge) is
+/// resampled twice — cheaper than keeping the intermediate image.
 pub fn area_downscale_rgba(
     src_w: u32,
     src_h: u32,
@@ -66,43 +72,40 @@ pub fn area_downscale_rgba(
     let (sw, sh, dw, dh) = (src_w as usize, src_h as usize, dst_w as usize, dst_h as usize);
     debug_assert_eq!(rgba.len(), sw * sh * 4);
 
-    // Horizontal pass: sw × sh → dw × sh (f32 accumulators).
     let x_weights = axis_weights(sw, dw);
-    let mut mid = vec![0f32; dw * sh * 4];
-    for y in 0..sh {
-        let row = &rgba[y * sw * 4..(y + 1) * sw * 4];
-        for (dx, (start, weights)) in x_weights.iter().enumerate() {
-            let mut acc = [0f32; 4];
-            for (k, w) in weights.iter().enumerate() {
-                let si = (start + k) * 4;
-                for c in 0..4 {
-                    acc[c] += row[si + c] as f32 * w;
-                }
-            }
-            let di = (y * dw + dx) * 4;
-            mid[di..di + 4].copy_from_slice(&acc);
-        }
-    }
-
-    // Vertical pass: dw × sh → dw × dh.
     let y_weights = axis_weights(sh, dh);
+    let mut row = vec![0f32; dw * 4];
+    let mut acc = vec![0f32; dw * 4];
     let mut out = vec![0u8; dw * dh * 4];
-    for (dy, (start, weights)) in y_weights.iter().enumerate() {
-        for x in 0..dw {
-            let mut acc = [0f32; 4];
-            for (k, w) in weights.iter().enumerate() {
-                let si = ((start + k) * dw + x) * 4;
-                for c in 0..4 {
-                    acc[c] += mid[si + c] * w;
-                }
+
+    for (dy, (y_start, y_ws)) in y_weights.iter().enumerate() {
+        acc.fill(0.0);
+        for (k, wy) in y_ws.iter().enumerate() {
+            let src_row = &rgba[(y_start + k) * sw * 4..(y_start + k + 1) * sw * 4];
+            resample_row(src_row, &x_weights, &mut row);
+            for (a, r) in acc.iter_mut().zip(&row) {
+                *a += r * wy;
             }
-            let di = (dy * dw + x) * 4;
-            for c in 0..4 {
-                out[di + c] = acc[c].round().clamp(0.0, 255.0) as u8;
-            }
+        }
+        for (o, a) in out[dy * dw * 4..(dy + 1) * dw * 4].iter_mut().zip(&acc) {
+            *o = a.round().clamp(0.0, 255.0) as u8;
         }
     }
     out
+}
+
+/// Horizontal box-filter pass of one RGBA row into `out` (dst_w × 4 floats).
+fn resample_row(src_row: &[u8], x_weights: &[(usize, Vec<f32>)], out: &mut [f32]) {
+    for (dx, (start, weights)) in x_weights.iter().enumerate() {
+        let mut px = [0f32; 4];
+        for (k, w) in weights.iter().enumerate() {
+            let si = (start + k) * 4;
+            for c in 0..4 {
+                px[c] += src_row[si + c] as f32 * w;
+            }
+        }
+        out[dx * 4..dx * 4 + 4].copy_from_slice(&px);
+    }
 }
 
 /// For each destination index along one axis: the first source index it covers
@@ -202,25 +205,48 @@ pub fn shrink_png_base64(image_base64: &str, max_edge: u32) -> Result<Option<Str
 /// Applies `request.max_image_edge` to every image part in place. An image
 /// that cannot be processed (not a PNG, corrupt) is sent as-is: the provider
 /// may still accept it, and dropping the user's screenshot would be worse than
-/// sending it large. Returns how many images were downscaled.
+/// sending it large. Images are processed in parallel (one scoped thread each —
+/// a batch is at most 5 shots), so a batch costs about one image's time
+/// (~80 ms for 1440p → 1568 in release) instead of the sum. Returns how many
+/// images were downscaled.
 pub fn downscale_request_images(request: &mut LlmStreamRequest) -> usize {
     let Some(max_edge) = request.max_image_edge else {
         return 0;
     };
-    let mut shrunk = 0;
-    for part in request.messages.iter_mut().flat_map(|m| m.parts.iter_mut()) {
-        if let LlmContentPart::Image { image_base64 } = part {
-            match shrink_png_base64(image_base64, max_edge) {
-                Ok(Some(smaller)) => {
-                    *image_base64 = smaller;
-                    shrunk += 1;
-                }
-                Ok(None) => {}
-                Err(e) => eprintln!("[llm_stream] image left unscaled: {e}"),
-            }
-        }
-    }
-    shrunk
+    let images: Vec<&mut String> = request
+        .messages
+        .iter_mut()
+        .flat_map(|m| m.parts.iter_mut())
+        .filter_map(|part| match part {
+            LlmContentPart::Image { image_base64 } => Some(image_base64),
+            LlmContentPart::Text { .. } => None,
+        })
+        .collect();
+
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = images
+            .into_iter()
+            .map(|image_base64| {
+                scope.spawn(move || match shrink_png_base64(image_base64, max_edge) {
+                    Ok(Some(smaller)) => {
+                        *image_base64 = smaller;
+                        true
+                    }
+                    Ok(None) => false,
+                    Err(e) => {
+                        eprintln!("[llm_stream] image left unscaled: {e}");
+                        false
+                    }
+                })
+            })
+            .collect();
+        // A panicking worker leaves its image untouched (counted as not shrunk).
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or(false))
+            .filter(|&shrunk| shrunk)
+            .count()
+    })
 }
 
 #[cfg(test)]

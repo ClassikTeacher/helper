@@ -66,7 +66,7 @@ function proseLines(answer: string): string[] {
 const QUOTE_RE = /«([^»]+)»/g;
 // "стр. 12", "строка 32", "строке 62", "Lines 26–28, 63–65", "Line 5-7".
 const LINE_REF_RE =
-  /(?:стр\.?|строк[аиеу]?|lines?)\s*((?:\d+(?:\s*[–—-]\s*\d+)?)(?:\s*,\s*\d+(?:\s*[–—-]\s*\d+)?)*)/giu;
+  /(?<![\p{L}\p{N}_])(?:стр\.?|строк[аиеу]?|lines?)\s*((?:\d+(?:\s*[–—-]\s*\d+)?)(?:\s*,\s*\d+(?:\s*[–—-]\s*\d+)?)*)/giu;
 // Code-ish tokens used to VERIFY a line reference against the source window:
 // «quotes», `backticks`, dotted calls (http.NewRequest), calls (len(name)),
 // indexing (cache[id]), increments (requests++), camelCase identifiers
