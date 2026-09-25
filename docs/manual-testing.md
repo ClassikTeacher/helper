@@ -56,6 +56,17 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 - [ ] **Image cap (R4/R17):** with the default 1568 edge, the request in the OpenRouter log carries a ~1568×882 image for a 2560×1440 capture; with `VITE_HEAVY_MAX_IMAGE_EDGE=2576` a Review request carries the full 2560×1440
 - [ ] **Reviewer format (R14/R18):** findings look like `<Severity> — «quote» (стр. N): … Последствие: … Исправление: …`; Low items are a single "Также (Low): …" line; `стр. N` appears only when the gutter/numbered text shows it
 
+### P0/P1 quality fixes (2026-09)
+- [ ] **One active run:** press SEND twice quickly (or Run while an answer streams) — the second answer replaces the first; the two never interleave in the HUD
+- [ ] **Stop:** while an answer streams, "■ Стоп" (or Esc with the HUD focused) stops it; the partial answer stays with "Остановлено."; the OpenRouter activity log shows the generation stopped (not completed)
+- [ ] **Recording window:** record > 60 s (`AI_HELPER_MAX_RECORDING_SECS` to shorten) — the HUD clock keeps running and shows "в запрос уйдут последние N с"; the transcript contains the END of the speech, not the beginning
+- [ ] **Multi-monitor:** with the mouse on the second monitor, the capture hotkey captures THAT monitor
+- [ ] **STT vocabulary:** say "горутина", "мьютекс", "Kafka", "JOIN" — they come out spelled as terms; `AI_HELPER_STT_PROMPT=off` / `AI_HELPER_STT_LANGUAGE=auto` still transcribe
+- [ ] **Follow-up:** after an answer, type "а без доп. памяти?" and press "↳ Уточнить" — the answer addresses the same task; a new analysis (SEND) starts a new thread
+- [ ] **Screen transcription:** with `VITE_AUTO_TRANSCRIBE=reviewer`, a Review shows "распознаю код…" first; with a bogus `VITE_TRANSCRIBE_MODEL` the review still arrives (screenshots only)
+- [ ] **Code blocks:** answers show highlighted code with a "копировать" button; pasting after it gives the exact code
+- [ ] `pnpm models:check` passes for the configured chains
+
 ### Phase 4 — Context
 - [ ] History persists across app restarts
 - [ ] Relevant prior context is recalled
