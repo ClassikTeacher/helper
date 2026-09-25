@@ -21,7 +21,7 @@ interface MessageListProps {
 export function MessageList({ answer, streaming, error, stopped = false }: MessageListProps) {
   const hasAnswer = answer.length > 0;
 
-  if (!hasAnswer && !streaming && !error) {
+  if (!hasAnswer && !streaming && !error && !stopped) {
     return <div className="text-neutral-500 text-sm">Press the hotkey or ask something…</div>;
   }
 

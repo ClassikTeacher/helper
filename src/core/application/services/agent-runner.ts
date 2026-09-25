@@ -21,12 +21,21 @@ export interface AgentRunnerDeps {
 /** Progress the UI may show before the first answer token. */
 export type RunStatus = 'reading-screen';
 
-/** One completed exchange, kept as text for follow-up questions (P1 item 9). */
+/** One completed exchange, kept for follow-up questions (P1 item 9). */
 export interface ConversationTurn {
-  /** The user text actually sent (data blocks included, images not). */
+  /** The user text actually sent (data blocks included). */
   readonly userText: string;
+  /**
+   * Screenshots (base64) re-attached on follow-ups — ONLY when the task
+   * existed solely as pixels (no code text, no transcription); otherwise the
+   * text already carries it and the images would just cost tokens again.
+   */
+  readonly images?: readonly string[];
   readonly answer: string;
 }
+
+/** What `onPrompt` reports: the user message a follow-up thread starts from. */
+export type SentPrompt = Omit<ConversationTurn, 'answer'>;
 
 export interface FollowUpParams {
   readonly agent: Agent;
@@ -34,7 +43,7 @@ export interface FollowUpParams {
   readonly history: readonly ConversationTurn[];
   /** The user's follow-up question. */
   readonly question: string;
-  readonly onPrompt?: (userText: string) => void;
+  readonly onPrompt?: (sent: SentPrompt) => void;
   readonly onFinish?: (finish: LlmFinish) => void;
   readonly signal?: AbortSignal;
 }
@@ -63,8 +72,8 @@ export interface AnalyzeScreenParams {
    * only carries deltas.
    */
   readonly onFinish?: (finish: LlmFinish) => void;
-  /** Receives the user text that was sent — the start of a follow-up thread. */
-  readonly onPrompt?: (userText: string) => void;
+  /** Receives the user message that was sent — the start of a follow-up thread. */
+  readonly onPrompt?: (sent: SentPrompt) => void;
   /** Progress before streaming (e.g. the screen-transcription pass). */
   readonly onStatus?: (status: RunStatus) => void;
   readonly signal?: AbortSignal;
@@ -113,7 +122,12 @@ export class AgentRunner {
     const transcriber = this.deps.transcriber;
     if (!hasCode && shots.length > 0 && transcriber?.appliesTo(params.agent.id)) {
       params.onStatus?.('reading-screen');
-      transcribed = await transcriber.transcribe(shots, params.signal);
+      try {
+        transcribed = await transcriber.transcribe(shots, params.signal);
+      } catch (err) {
+        // Optional pass: a failure degrades to screenshots only, never to no answer.
+        console.warn('Screen transcription failed; continuing with screenshots only', err);
+      }
       if (params.signal?.aborted) return;
     }
 
@@ -129,7 +143,13 @@ export class AgentRunner {
           : {}),
       screenshotCount: shots.length,
     });
-    params.onPrompt?.(userText);
+    params.onPrompt?.({
+      userText,
+      // The task lives only in the pixels → follow-ups must see them again.
+      ...(!hasCode && !transcribed && shots.length > 0
+        ? { images: shots.map((shot) => shot.imageBase64) }
+        : {}),
+    });
 
     const messages: LlmMessage[] = [
       { role: 'system', parts: [{ kind: 'text', text: system }] },
@@ -152,18 +172,24 @@ export class AgentRunner {
 
   /**
    * A follow-up question on the current thread (P1 item 9): system prompt,
-   * then the earlier exchanges as plain text turns, then the question. The
-   * screenshots are not re-sent — image tokens dominate the cost, and the
-   * thread already carries the task statement, any code text and the answer.
+   * then the earlier exchanges, then the question. Screenshots are re-attached
+   * only for a turn whose task existed solely as pixels (see
+   * `ConversationTurn.images`); otherwise the text turns carry the task.
    */
   async *followUp(params: FollowUpParams): AsyncIterable<string> {
     const userText = buildFollowUpText(params.question);
-    params.onPrompt?.(userText);
+    params.onPrompt?.({ userText });
     const text = (t: string): LlmContentPart[] => [{ kind: 'text', text: t }];
     const messages: LlmMessage[] = [
       { role: 'system', parts: text(params.agent.systemPrompt) },
       ...params.history.flatMap((turn): LlmMessage[] => [
-        { role: 'user', parts: text(turn.userText) },
+        {
+          role: 'user',
+          parts: [
+            ...(turn.images ?? []).map((imageBase64): LlmContentPart => ({ kind: 'image', imageBase64 })),
+            ...text(turn.userText),
+          ],
+        },
         { role: 'assistant', parts: text(turn.answer) },
       ]),
       { role: 'user', parts: text(userText) },

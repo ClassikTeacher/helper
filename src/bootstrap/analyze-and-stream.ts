@@ -39,9 +39,12 @@ export const MAX_THREAD_TURNS = 4;
  * A successful analysis starts a NEW follow-up thread (P1 item 9).
  */
 export async function analyzeAndStream(useCases: RunUseCases, params: AnalyzeAndStreamParams): Promise<void> {
-  let userText = '';
+  let prompt: ConversationTurn = { userText: '', answer: '' };
   await streamRun(useCases, {
     hint: params.instructions.trim(),
+    // A new analysis is a new task: the old thread must not survive a stopped
+    // or failed run (a follow-up would then ask about the previous task).
+    onStart: () => useHudStore.getState().setThread(null),
     // If loopback recording is active (phase 9), stop it and transcribe BEFORE
     // streaming so the "transcribing…" spinner shows first and the transcript
     // rides along in the same request as the screenshots. An STT failure throws
@@ -52,8 +55,8 @@ export async function analyzeAndStream(useCases: RunUseCases, params: AnalyzeAnd
         ...params,
         transcript,
         ...hooks,
-        onPrompt: (text) => {
-          userText = text;
+        onPrompt: (sent) => {
+          prompt = { ...sent, answer: '' };
         },
         onStatus: (status) => useHudStore.getState().setPhase(status),
       }),
@@ -69,7 +72,7 @@ export async function analyzeAndStream(useCases: RunUseCases, params: AnalyzeAnd
       if (useHudStore.getState().codeText === (params.codeText ?? '')) {
         useHudStore.getState().setCodeText('');
       }
-      useHudStore.getState().setThread({ agentId: params.agent.id, turns: [{ userText, answer }] });
+      useHudStore.getState().setThread({ agentId: params.agent.id, turns: [{ ...prompt, answer }] });
     },
   });
 }
@@ -96,8 +99,8 @@ export async function followUpAndStream(
         history: thread.turns,
         question,
         ...hooks,
-        onPrompt: (text) => {
-          userText = text;
+        onPrompt: (sent) => {
+          userText = sent.userText;
         },
       }),
     summary: `${params.agent.name} ↳ ${question}`,
@@ -120,6 +123,8 @@ function boundThread(turns: readonly ConversationTurn[]): ConversationTurn[] {
 interface RunSpec {
   /** Shown in the HUD while the answer streams ("Hint" chip). */
   readonly hint: string;
+  /** Called right after streaming starts (e.g. an analysis drops the old thread). */
+  readonly onStart?: () => void;
   /** Work before streaming (e.g. STT); its result is handed to `source`. */
   readonly prepare: () => Promise<string>;
   readonly source: (
@@ -143,6 +148,7 @@ async function streamRun(useCases: RunUseCases, spec: RunSpec): Promise<void> {
     if (signal.aborted) return settleAborted(signal);
 
     useHudStore.getState().startStreaming();
+    spec.onStart?.();
     // Display-only copy of what was applied to this run.
     useHudStore.getState().setActiveHint(spec.hint);
 
@@ -216,8 +222,11 @@ async function collectTranscript(
     return '';
   }
 
-  await useCases.transcribeAudio.stopRecording();
+  // Enter "transcribing" BEFORE the first await: a second send arriving while
+  // stopRecording() is in flight must see it and back off (runSend), or it
+  // would supersede this run and drain the audio into a run that is discarded.
   useHudStore.getState().startTranscribing();
+  await useCases.transcribeAudio.stopRecording();
   const transcript = await useCases.transcribeAudio.transcribe();
   useHudStore.getState().setTranscript(transcript);
   return transcript;

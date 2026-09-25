@@ -37,22 +37,24 @@ PostgreSQL, Redis, Kafka, Docker, Kubernetes, HTTP, REST, gRPC, API, \
 O(n), хеш-таблица, бинарный поиск, связный список, LeetCode.";
 const STT_PROMPT_ENV: &str = "AI_HELPER_STT_PROMPT";
 
+/// An env override: unset/blank → `default`; the `disable` word → `None`;
+/// anything else → that value.
+fn resolve_override(raw: Option<&str>, disable: &str, default: &str) -> Option<String> {
+    match raw.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(v) if v.eq_ignore_ascii_case(disable) => None,
+        Some(v) => Some(v.to_string()),
+        None => Some(default.to_string()),
+    }
+}
+
 /// Language hint to send: the override, `None` for `auto`, else the default.
 fn resolve_language(raw: Option<&str>) -> Option<String> {
-    match raw.map(str::trim).filter(|v| !v.is_empty()) {
-        Some(v) if v.eq_ignore_ascii_case("auto") => None,
-        Some(v) => Some(v.to_string()),
-        None => Some(STT_LANGUAGE.to_string()),
-    }
+    resolve_override(raw, "auto", STT_LANGUAGE)
 }
 
 /// Vocabulary prompt to send: the override, `None` for `off`, else the default.
 fn resolve_prompt(raw: Option<&str>) -> Option<String> {
-    match raw.map(str::trim).filter(|v| !v.is_empty()) {
-        Some(v) if v.eq_ignore_ascii_case("off") => None,
-        Some(v) => Some(v.to_string()),
-        None => Some(DEFAULT_STT_PROMPT.to_string()),
-    }
+    resolve_override(raw, "off", DEFAULT_STT_PROMPT)
 }
 
 /// The text fields of the multipart form (besides `file`). Pure — unit-tested.

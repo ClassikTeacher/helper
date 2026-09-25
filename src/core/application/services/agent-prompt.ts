@@ -136,15 +136,13 @@ function directive(screenshotCount: number, hasCode: boolean, transcribed: boole
 }
 
 /**
- * The user text of a follow-up question (P1 item 9). The earlier exchange is
- * sent as text (the screenshots are NOT re-attached — image tokens dominate the
- * cost), so the model is told to rely on the task and code quoted there. The
- * follow-up is the app user's own request, so unlike the data blocks it IS an
- * instruction.
+ * The user text of a follow-up question (P1 item 9), sent after the earlier
+ * exchange. The follow-up is the app user's own request, so unlike the data
+ * blocks it IS an instruction.
  */
 export function buildFollowUpText(question: string): string {
   return [
-    'Follow-up from the app user about your previous answer (same task; the screenshots are not attached again — rely on the task, code and answer above):',
+    'Follow-up from the app user about your previous answer (same task — see the first message of this conversation):',
     block('follow_up', question.trim()),
     'Answer exactly what is asked; do not repeat the whole previous answer. If the follow-up changes the task (a new constraint, another language), give the complete updated solution.',
     'Write your answer in Russian. Keep code, identifiers, and console/output text in their original language; all explanations, reasoning, and review comments must be in Russian.',

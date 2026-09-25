@@ -13,13 +13,21 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::Notify;
 
-/// Upper bound on remembered entries. Only a cancel for a request that never
-/// arrives leaves an entry behind; the cap keeps such leftovers bounded.
+/// Upper bound on STRAY entries — cancels for a request that never registers
+/// or already finished (e.g. Stop pressed just as the answer completed). Only
+/// those are evicted at the cap; an entry a running stream waits on never is,
+/// or a later Stop for it would wake a fresh Notify nobody listens to.
 const MAX_ENTRIES: usize = 256;
+
+struct Entry {
+    notify: Arc<Notify>,
+    /// A stream registered this id and has not finished yet.
+    live: bool,
+}
 
 #[derive(Default)]
 pub struct CancelRegistry {
-    entries: Mutex<HashMap<String, Arc<Notify>>>,
+    entries: Mutex<HashMap<String, Entry>>,
 }
 
 impl CancelRegistry {
@@ -31,10 +39,12 @@ impl CancelRegistry {
     /// already arrived for this id).
     pub fn register(&self, request_id: &str) -> Arc<Notify> {
         let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-        entries
-            .entry(request_id.to_string())
-            .or_insert_with(|| Arc::new(Notify::new()))
-            .clone()
+        let entry = entries.entry(request_id.to_string()).or_insert_with(|| Entry {
+            notify: Arc::new(Notify::new()),
+            live: false,
+        });
+        entry.live = true;
+        entry.notify.clone()
     }
 
     /// Requests cancellation. `notify_one` stores a permit, so a stream that
@@ -42,11 +52,15 @@ impl CancelRegistry {
     pub fn cancel(&self, request_id: &str) {
         let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         if entries.len() >= MAX_ENTRIES && !entries.contains_key(request_id) {
-            entries.clear();
+            entries.retain(|_, entry| entry.live);
         }
         entries
             .entry(request_id.to_string())
-            .or_insert_with(|| Arc::new(Notify::new()))
+            .or_insert_with(|| Entry {
+                notify: Arc::new(Notify::new()),
+                live: false,
+            })
+            .notify
             .notify_one();
     }
 
@@ -100,6 +114,19 @@ mod tests {
         assert!(!rt().block_on(fires(notify)));
         registry.finish("b");
         assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn eviction_at_the_cap_never_drops_a_running_stream() {
+        // Regression (review): clearing everything at the cap orphaned the
+        // Notify of a live stream, so a later Stop no longer reached it.
+        let registry = CancelRegistry::new();
+        let live = registry.register("live");
+        for i in 0..(MAX_ENTRIES * 2) {
+            registry.cancel(&format!("stray-{i}"));
+        }
+        registry.cancel("live");
+        assert!(rt().block_on(fires(live)));
     }
 
     #[test]

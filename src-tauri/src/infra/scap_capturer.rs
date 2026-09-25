@@ -117,21 +117,15 @@ fn select_target(
     let Some(name) = display_name else {
         return Ok(None);
     };
-    let mut displays = displays();
-    let titles: Vec<&str> = displays
-        .iter()
-        .map(|t| match t {
-            Target::Display(d) => d.title.as_str(),
-            _ => "",
-        })
-        .collect();
-    Ok(match_display(&titles, name).map(|i| displays.swap_remove(i)))
+    Ok(displays()
+        .into_iter()
+        .find(|t| matches!(t, Target::Display(d) if same_device(&d.title, name))))
 }
 
-/// Index of the display whose device name equals `name` (case-insensitive —
+/// Whether two OS display device names are the same (case-insensitive —
 /// Windows device names are `\\.\DISPLAYn`, casing is not guaranteed). Pure.
-fn match_display(titles: &[&str], name: &str) -> Option<usize> {
-    titles.iter().position(|t| t.eq_ignore_ascii_case(name))
+fn same_device(title: &str, name: &str) -> bool {
+    title.eq_ignore_ascii_case(name)
 }
 
 /// Convert a top-down BGRA frame to RGBA, optionally cropping to `region`. scap
@@ -259,10 +253,9 @@ mod tests {
     }
 
     #[test]
-    fn match_display_finds_the_cursor_monitor_by_device_name() {
-        let titles = [r"\\.\DISPLAY1", r"\\.\DISPLAY2"];
-        assert_eq!(match_display(&titles, r"\\.\display2"), Some(1));
-        assert_eq!(match_display(&titles, r"\\.\DISPLAY9"), None);
+    fn same_device_matches_display_names_case_insensitively() {
+        assert!(same_device(r"\\.\DISPLAY2", r"\\.\display2"));
+        assert!(!same_device(r"\\.\DISPLAY2", r"\\.\DISPLAY9"));
     }
 
     #[test]

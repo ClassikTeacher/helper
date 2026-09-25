@@ -236,3 +236,111 @@ describe('PromptInput follow-up button', () => {
     expect(screen.queryByRole('button', { name: '↳ Уточнить' })).not.toBeInTheDocument();
   });
 });
+
+describe('review regressions (P1 follow-ups / transcription)', () => {
+  function useCasesWith(llm: LlmPort, extra: Partial<AppContainer['useCases']> = {}): AppContainer['useCases'] {
+    return {
+      analyzeScreenshot: new AnalyzeScreenshotUseCase(
+        new AgentRunner({ screenCapture: new FakeScreenCaptureAdapter(), llm }),
+      ),
+      ...extra,
+    } as AppContainer['useCases'];
+  }
+
+  beforeEach(() => {
+    stopRun();
+    useHudStore.getState().reset();
+    useHudStore.setState({ instructions: '' });
+  });
+
+  it('a new analysis drops the old thread as soon as it starts, even if it then fails', async () => {
+    const ok = scriptedLlm('answer A');
+    await analyzeAndStream(useCasesWith(ok), { agent: AGENTS.solver, language: 'all', instructions: '', screenshots: [SHOT] });
+    expect(useHudStore.getState().thread).not.toBeNull();
+
+    const failing: LlmPort = {
+      async *stream() {
+        yield { type: 'error', message: 'boom', retryable: false };
+      },
+    };
+    await analyzeAndStream(useCasesWith(failing), { agent: AGENTS.solver, language: 'all', instructions: '', screenshots: [SHOT] });
+
+    expect(useHudStore.getState().error).toBe('boom');
+    expect(useHudStore.getState().thread).toBeNull();
+  });
+
+  it('a failing transcription pass degrades to screenshots only instead of failing the run', async () => {
+    const llm: LlmPort & { calls: number } = {
+      calls: 0,
+      async *stream(request) {
+        llm.calls++;
+        if (request.temperature === 0) {
+          yield { type: 'error', message: 'ocr model rejected images', retryable: false };
+          return;
+        }
+        yield { type: 'text-delta', delta: 'answer from pixels' };
+        yield { type: 'finish', reason: 'stop' };
+      },
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const runner = new AgentRunner({
+      screenCapture: new FakeScreenCaptureAdapter(),
+      llm,
+      transcriber: new ScreenTranscriber(llm, { agents: new Set(['solver']) }),
+    });
+
+    const answer = await drain(
+      runner.analyzeScreen({ agent: AGENTS.solver, language: 'all', instructions: '', screenshots: [SHOT] }),
+    );
+
+    expect(answer).toBe('answer from pixels');
+    expect(llm.calls).toBe(2);
+    warn.mockRestore();
+  });
+
+  it('a second send while stopRecording() is still in flight backs off (no lost audio)', async () => {
+    let releaseStop!: () => void;
+    const audio = {
+      stopRecording: vi.fn(() => new Promise<void>((r) => (releaseStop = r))),
+      transcribe: vi.fn(async () => 'the question'),
+      startRecording: vi.fn(async () => ({ maxSeconds: 60 })),
+    };
+    const llm = scriptedLlm('answer');
+    const useCases = useCasesWith(llm, { transcribeAudio: audio as never });
+    useHudStore.setState({ recording: true, screenshots: [SHOT] });
+
+    const { runSend } = await import('@/bootstrap/send-batch');
+    const first = runSend(useCases);
+    await Promise.resolve();
+    await runSend(useCases); // pressed again while the first is stopping the recorder
+    releaseStop();
+    await first;
+
+    expect(audio.stopRecording).toHaveBeenCalledTimes(1);
+    expect(audio.transcribe).toHaveBeenCalledTimes(1);
+    expect(userTextOf(llm.requests[0])).toContain('<transcript>\nthe question\n</transcript>');
+  });
+
+  it('follow-ups re-attach the screenshots only when the task existed solely as pixels', async () => {
+    const llm = scriptedLlm('A', 'B', 'C', 'D');
+    const useCases = useCasesWith(llm);
+    const imagesIn = (i: number) =>
+      llm.requests[i]!.messages.flatMap((m) => m.parts).filter((p) => p.kind === 'image').length;
+
+    await analyzeAndStream(useCases, { agent: AGENTS.solver, language: 'all', instructions: '', screenshots: [SHOT] });
+    useHudStore.setState({ instructions: 'q' });
+    await runFollowUp(useCases);
+    expect(imagesIn(1)).toBe(1);
+
+    await analyzeAndStream(useCases, {
+      agent: AGENTS.solver,
+      language: 'all',
+      instructions: '',
+      screenshots: [SHOT],
+      codeText: 'task as text',
+    });
+    useHudStore.setState({ instructions: 'q' });
+    await runFollowUp(useCases);
+    expect(imagesIn(3)).toBe(0);
+  });
+});

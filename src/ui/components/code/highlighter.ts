@@ -83,16 +83,29 @@ function getHighlighter(): Promise<HighlighterCore> {
       engine: createJavaScriptRegexEngine({ forgiving: true }),
     });
   })();
+  // A failed chunk load is transient: forget it so the next block retries.
+  highlighter.catch(() => {
+    highlighter = null;
+  });
   return highlighter;
 }
 
 async function ensureLanguage(core: HighlighterCore, lang: string): Promise<boolean> {
   let ready = loaded.get(lang);
   if (!ready) {
-    ready = GRAMMARS[lang]!()
-      .then((mod) => core.loadLanguage((mod as { default: Parameters<HighlighterCore['loadLanguage']>[0] }).default))
-      .then(() => true)
-      .catch(() => false);
+    ready = GRAMMARS[lang]!().then(
+      (mod) =>
+        core
+          .loadLanguage((mod as { default: Parameters<HighlighterCore['loadLanguage']>[0] }).default)
+          .then(() => true)
+          // The grammar itself does not compile: permanent, stay plain.
+          .catch(() => false),
+      () => {
+        // The chunk failed to load: transient, retry on the next block.
+        loaded.delete(lang);
+        return false;
+      },
+    );
     loaded.set(lang, ready);
   }
   return ready;

@@ -17,15 +17,27 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** Minimal .env reader: KEY=VALUE lines, # comments, no interpolation. */
-function readEnvFile(path) {
-  if (!existsSync(path)) return {};
+/**
+ * Minimal .env reader matching Vite's dotenv for the cases that matter here:
+ * `KEY=VALUE`, full-line `#` comments, quoted values ('…' / "…" — quotes
+ * stripped, `#` kept), and ` #` inline comments after unquoted values.
+ */
+export function parseEnv(text) {
   const env = {};
-  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
-    const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
-    if (m && !line.trim().startsWith('#')) env[m[1]] = m[2];
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\s*(?:export\s+)?([A-Za-z0-9_]+)\s*=\s*(.*)$/.exec(line);
+    if (!m || line.trim().startsWith('#')) continue;
+    let value = m[2].trim();
+    const quoted = /^(['"])(.*)\1$/.exec(value);
+    if (quoted) value = quoted[2];
+    else value = value.replace(/\s+#.*$/, '').trim();
+    env[m[1]] = value;
   }
   return env;
+}
+
+function readEnvFile(path) {
+  return existsSync(path) ? parseEnv(readFileSync(path, 'utf8')) : {};
 }
 
 /** Compiled-in defaults, read from model-route.ts so they can't drift. */
@@ -62,6 +74,10 @@ function routes(env) {
   return { light: route('LIGHT'), heavy: route('HEAVY') };
 }
 
+// Run as a script (not when imported by tests).
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) await main();
+
+async function main() {
 const env = { ...readEnvFile(join(ROOT, '.env')), ...process.env };
 const res = await fetch('https://openrouter.ai/api/v1/models');
 if (!res.ok) {
@@ -92,3 +108,4 @@ for (const [name, route] of Object.entries(routes(env))) {
 }
 console.log(failed ? '\nSome checks failed.' : '\nAll models OK.');
 process.exit(failed ? 1 : 0);
+}
