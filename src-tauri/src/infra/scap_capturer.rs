@@ -41,7 +41,7 @@ impl ScreenCapturer for ScapCapturer {
             return Err("screen capture is not supported on this platform build".to_string());
         }
 
-        let target = select_target(request.display_index)?;
+        let target = select_target(request.display_index, request.display_name.as_deref())?;
 
         let options = Options {
             fps: 1,
@@ -92,19 +92,46 @@ impl ScreenCapturer for ScapCapturer {
     }
 }
 
-/// Pick the capture target. `None` => scap's main display (the common case). A
-/// `display_index` selects the Nth display among all targets; out-of-range is a
-/// hard error rather than a silent fallback to the wrong screen.
-fn select_target(display_index: Option<u32>) -> Result<Option<Target>, String> {
-    match display_index {
-        None => Ok(None),
-        Some(idx) => get_all_targets()
+/// Pick the capture target. An explicit `display_index` selects the Nth
+/// display (out-of-range is a hard error — the caller asked for it). Otherwise
+/// `display_name` (the monitor under the cursor, resolved by `capture_screen`)
+/// is matched against the displays' device names; no match, or no name, falls
+/// back to scap's main display (`None`) — cursor detection is best-effort.
+fn select_target(
+    display_index: Option<u32>,
+    display_name: Option<&str>,
+) -> Result<Option<Target>, String> {
+    let displays = || {
+        get_all_targets()
             .into_iter()
             .filter(|t| matches!(t, Target::Display(_)))
+            .collect::<Vec<_>>()
+    };
+    if let Some(idx) = display_index {
+        return displays()
+            .into_iter()
             .nth(idx as usize)
             .map(Some)
-            .ok_or_else(|| format!("display index {idx} out of range")),
+            .ok_or_else(|| format!("display index {idx} out of range"));
     }
+    let Some(name) = display_name else {
+        return Ok(None);
+    };
+    let mut displays = displays();
+    let titles: Vec<&str> = displays
+        .iter()
+        .map(|t| match t {
+            Target::Display(d) => d.title.as_str(),
+            _ => "",
+        })
+        .collect();
+    Ok(match_display(&titles, name).map(|i| displays.swap_remove(i)))
+}
+
+/// Index of the display whose device name equals `name` (case-insensitive —
+/// Windows device names are `\\.\DISPLAYn`, casing is not guaranteed). Pure.
+fn match_display(titles: &[&str], name: &str) -> Option<usize> {
+    titles.iter().position(|t| t.eq_ignore_ascii_case(name))
 }
 
 /// Convert a top-down BGRA frame to RGBA, optionally cropping to `region`. scap
@@ -229,6 +256,13 @@ mod tests {
         let bgra = solid_bgra(2, 2, 0, 0, 0, 255);
         let region = CaptureRegion { x: 2, y: 2, width: 1, height: 1 };
         assert!(bgra_to_rgba(2, 2, &bgra, Some(&region)).is_err());
+    }
+
+    #[test]
+    fn match_display_finds_the_cursor_monitor_by_device_name() {
+        let titles = [r"\\.\DISPLAY1", r"\\.\DISPLAY2"];
+        assert_eq!(match_display(&titles, r"\\.\display2"), Some(1));
+        assert_eq!(match_display(&titles, r"\\.\DISPLAY9"), None);
     }
 
     #[test]

@@ -21,6 +21,11 @@ pub struct CaptureRequest {
     pub region: Option<CaptureRegion>,
     #[serde(default)]
     pub display_index: Option<u32>,
+    /// Target display by OS device name (e.g. `\\.\DISPLAY2`). When neither
+    /// this nor `display_index` is given, `capture_screen` fills it with the
+    /// monitor under the mouse cursor — the screen the user is working on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

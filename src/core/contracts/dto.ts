@@ -26,8 +26,13 @@ export interface CaptureRegionDto {
 export interface CaptureRequestDto {
   /** Optional sub-region; omit for full screen. */
   readonly region?: CaptureRegionDto;
-  /** Target display index; omit for primary. */
+  /** Target display index. */
   readonly displayIndex?: number;
+  /**
+   * Target display by OS device name. With neither this nor `displayIndex`,
+   * native captures the monitor under the mouse cursor (P0).
+   */
+  readonly displayName?: string;
 }
 
 export interface CaptureResultDto {
