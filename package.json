@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p eval/tsconfig.json",
     "lint": "eslint .",
     "eval": "vitest run --config vitest.eval.config.ts",
-    "eval:shots": "node eval/render-shots.mjs"
+    "eval:shots": "node eval/render-shots.mjs",
+    "models:check": "node eval/check-models.mjs"
   },
   "dependencies": {
     "@openrouter/ai-sdk-provider": "^0.4.5",
