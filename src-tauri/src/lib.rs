@@ -75,6 +75,9 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_sql::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
+        // R15: the paste-code hotkey reads the clipboard natively (a global
+        // hotkey has no user gesture, so the webview Clipboard API can't).
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState::build_default())
         .invoke_handler(tauri::generate_handler![
             commands::capture::capture_screen,

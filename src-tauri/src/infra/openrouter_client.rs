@@ -75,6 +75,7 @@ impl OpenRouterClient {
         // the "partial tail" that hasn't been decoded yet.
         let mut buf: Vec<u8> = Vec::new();
         let mut stream = response.bytes_stream();
+        let mut state = StreamState::default();
 
         while let Some(item) = stream.next().await {
             let bytes = match item {
@@ -88,31 +89,22 @@ impl OpenRouterClient {
             buf.extend_from_slice(&bytes);
 
             for event in drain_sse_events(&mut buf) {
-                match parse_sse_event(&event) {
-                    SseOutcome::None => continue,
-                    SseOutcome::Done => return,
-                    SseOutcome::Chunk(chunk) => {
-                        let is_terminal = matches!(chunk, LlmChunk::Finish { .. });
-                        let _ = channel.send(chunk);
-                        if is_terminal {
-                            return;
-                        }
-                    }
+                let step = state.step(parse_sse_event(&event));
+                for chunk in step.chunks {
+                    let _ = channel.send(chunk);
+                }
+                if step.terminal {
+                    return;
                 }
             }
         }
 
-        // The HTTP body ended without an explicit terminator (`[DONE]` or a
-        // `finish_reason` chunk) — surface it instead of leaving the webview
-        // awaiting a stream that silently stopped.
-        // Provider closed the stream without a terminator — treat as a
-        // transient provider hiccup: retryable (the webview only fails over if
-        // no content was produced).
-        send_error(
-            channel,
-            "OpenRouter stream ended without a finish signal".to_string(),
-            true,
-        );
+        // The HTTP body ended without `[DONE]`: a finish seen earlier still
+        // completes the stream; otherwise surface the silent stop instead of
+        // leaving the webview awaiting a stream that ended. Provider closed the
+        // stream without a terminator — a transient provider hiccup: retryable
+        // (the webview only fails over if no content was produced).
+        let _ = channel.send(state.end_of_body());
     }
 }
 
@@ -138,13 +130,31 @@ fn send_error(channel: &Channel<LlmChunk>, message: String, retryable: bool) {
 /// Builds the OpenAI-compatible chat-completions request body. `usage.include`
 /// is requested explicitly — OpenRouter omits token/cost accounting otherwise
 /// (see decisions.md "Спайк llm_stream": usage came back `null` without it).
+///
+/// Per-route parameters (R16) are sent ONLY when set:
+/// - `temperature` — omitted when `None` (provider default). Models that reject
+///   a custom temperature (e.g. with reasoning on Anthropic) get none.
+/// - `reasoning` — `{ effort, exclude: true }`: the model thinks before
+///   answering, but the thinking is not streamed back — the HUD shows only the
+///   answer, and the SSE parser needs no reasoning-delta handling.
+///
+/// `max_tokens` is deliberately NEVER sent (user decision 2026-07-22): a cap
+/// would silently truncate answers; completeness wins. A provider-side length
+/// stop is still reported via `finish_reason: "length"` and shown in the HUD.
 fn build_request_body(request: &LlmStreamRequest) -> Value {
-    json!({
+    let mut body = json!({
         "model": request.model,
         "stream": true,
         "usage": { "include": true },
         "messages": request.messages.iter().map(to_openai_message).collect::<Vec<_>>(),
-    })
+    });
+    if let Some(temperature) = request.temperature {
+        body["temperature"] = json!(temperature);
+    }
+    if let Some(effort) = &request.reasoning_effort {
+        body["reasoning"] = json!({ "effort": effort, "exclude": true });
+    }
+    body
 }
 
 fn to_openai_message(message: &LlmMessage) -> Value {
@@ -198,6 +208,20 @@ fn to_openai_content_part(part: &LlmContentPart) -> Value {
     }
 }
 
+/// Everything one SSE `data:` JSON chunk can carry. Each field is collected
+/// independently because OpenRouter may put the last content delta and the
+/// `finish_reason` in the SAME chunk, and sends `usage` (with `cost`) in a
+/// LATER chunk than the one carrying `finish_reason` (with empty `choices`).
+#[derive(Debug, Default, PartialEq)]
+struct SseData {
+    delta: Option<String>,
+    finish_reason: Option<String>,
+    usage: Option<LlmUsage>,
+    model: Option<String>,
+    /// A mid-stream provider error (`{"error": {...}}` inside the stream).
+    error: Option<String>,
+}
+
 /// Outcome of parsing a single SSE event block.
 #[derive(Debug, PartialEq)]
 enum SseOutcome {
@@ -205,7 +229,88 @@ enum SseOutcome {
     None,
     /// `data: [DONE]` — the stream is over.
     Done,
-    Chunk(LlmChunk),
+    Data(SseData),
+}
+
+/// What the stream loop must do after one event: send these chunks, and stop
+/// if `terminal`.
+#[derive(Debug, PartialEq)]
+struct Step {
+    chunks: Vec<LlmChunk>,
+    terminal: bool,
+}
+
+/// Accumulates the terminal metadata across events so the single `finish`
+/// chunk the webview gets carries the reason, usage/cost and serving model
+/// together (R9/R19). Pure — unit-tested by feeding event sequences.
+#[derive(Debug, Default)]
+struct StreamState {
+    finish_reason: Option<String>,
+    usage: Option<LlmUsage>,
+    model: Option<String>,
+}
+
+impl StreamState {
+    fn step(&mut self, outcome: SseOutcome) -> Step {
+        match outcome {
+            SseOutcome::None => Step { chunks: vec![], terminal: false },
+            // `[DONE]` ends the stream even if no finish_reason arrived.
+            SseOutcome::Done => Step { chunks: vec![self.finish("stop")], terminal: true },
+            SseOutcome::Data(data) => {
+                if let Some(message) = data.error {
+                    // Mid-stream provider error: retryable — ResilientLlm only
+                    // fails over when no content has been produced yet.
+                    return Step {
+                        chunks: vec![LlmChunk::Error { message, retryable: true }],
+                        terminal: true,
+                    };
+                }
+                if data.model.is_some() {
+                    self.model = data.model;
+                }
+                if data.usage.is_some() {
+                    self.usage = data.usage;
+                }
+                if data.finish_reason.is_some() {
+                    self.finish_reason = data.finish_reason;
+                }
+                let mut chunks = Vec::new();
+                if let Some(delta) = data.delta {
+                    chunks.push(LlmChunk::TextDelta { delta });
+                }
+                // Usage is the last payload OpenRouter sends: once both the
+                // reason and the usage are in, there is nothing left to wait for.
+                let terminal = self.finish_reason.is_some() && self.usage.is_some();
+                if terminal {
+                    chunks.push(self.finish("stop"));
+                }
+                Step { chunks, terminal }
+            }
+        }
+    }
+
+    /// The HTTP body ended without `[DONE]`.
+    fn end_of_body(&mut self) -> LlmChunk {
+        if self.finish_reason.is_some() {
+            self.finish("stop")
+        } else {
+            LlmChunk::Error {
+                message: "OpenRouter stream ended without a finish signal".to_string(),
+                retryable: true,
+            }
+        }
+    }
+
+    fn finish(&mut self, default_reason: &str) -> LlmChunk {
+        LlmChunk::Finish {
+            reason: self
+                .finish_reason
+                .take()
+                .unwrap_or_else(|| default_reason.to_string()),
+            usage: self.usage.take(),
+            model: self.model.take(),
+        }
+    }
 }
 
 /// Splits complete SSE events (`\n\n`-terminated, per the SSE spec) out of an
@@ -262,26 +367,34 @@ fn parse_data_json(data: &str) -> SseOutcome {
         return SseOutcome::None;
     };
 
-    if let Some(reason) = value["choices"][0]["finish_reason"].as_str() {
-        let usage = value.get("usage").filter(|u| !u.is_null()).map(|u| LlmUsage {
+    let error = value.get("error").filter(|e| !e.is_null()).map(|e| {
+        e["message"]
+            .as_str()
+            .map(|m| format!("OpenRouter stream error: {m}"))
+            .unwrap_or_else(|| format!("OpenRouter stream error: {e}"))
+    });
+
+    let choice = &value["choices"][0];
+    let parsed = SseData {
+        delta: choice["delta"]["content"]
+            .as_str()
+            .filter(|d| !d.is_empty())
+            .map(str::to_string),
+        finish_reason: choice["finish_reason"].as_str().map(str::to_string),
+        usage: value.get("usage").filter(|u| !u.is_null()).map(|u| LlmUsage {
             input_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as u32,
             output_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as u32,
-        });
-        return SseOutcome::Chunk(LlmChunk::Finish {
-            reason: reason.to_string(),
-            usage,
-        });
-    }
+            cost: u["cost"].as_f64(),
+        }),
+        model: value["model"].as_str().map(str::to_string),
+        error,
+    };
 
-    if let Some(delta) = value["choices"][0]["delta"]["content"].as_str() {
-        if !delta.is_empty() {
-            return SseOutcome::Chunk(LlmChunk::TextDelta {
-                delta: delta.to_string(),
-            });
-        }
+    if parsed == SseData::default() {
+        SseOutcome::None
+    } else {
+        SseOutcome::Data(parsed)
     }
-
-    SseOutcome::None
 }
 
 #[cfg(test)]
@@ -364,15 +477,26 @@ mod tests {
         assert_eq!(parse_sse_event("data: [DONE]"), SseOutcome::Done);
     }
 
+    fn data(delta: Option<&str>, finish: Option<&str>) -> SseData {
+        SseData {
+            delta: delta.map(str::to_string),
+            finish_reason: finish.map(str::to_string),
+            ..SseData::default()
+        }
+    }
+
+    fn usage(input: u32, output: u32, cost: Option<f64>) -> LlmUsage {
+        LlmUsage {
+            input_tokens: input,
+            output_tokens: output,
+            cost,
+        }
+    }
+
     #[test]
     fn parse_sse_event_extracts_text_delta() {
         let event = r#"data: {"choices":[{"delta":{"content":"hi"}}]}"#;
-        assert_eq!(
-            parse_sse_event(event),
-            SseOutcome::Chunk(LlmChunk::TextDelta {
-                delta: "hi".to_string()
-            })
-        );
+        assert_eq!(parse_sse_event(event), SseOutcome::Data(data(Some("hi"), None)));
     }
 
     #[test]
@@ -382,29 +506,111 @@ mod tests {
     }
 
     #[test]
-    fn parse_sse_event_extracts_finish_with_usage() {
-        let event = r#"data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":34}}"#;
+    fn parse_sse_event_keeps_content_that_arrives_with_the_finish_reason() {
+        // Regression: the old parser checked finish_reason first and dropped
+        // the last delta when both came in one chunk.
+        let event = r#"data: {"choices":[{"delta":{"content":"end."},"finish_reason":"stop"}]}"#;
+        assert_eq!(parse_sse_event(event), SseOutcome::Data(data(Some("end."), Some("stop"))));
+    }
+
+    #[test]
+    fn parse_sse_event_extracts_usage_cost_and_model() {
+        let event = r#"data: {"model":"anthropic/claude-haiku-4.5","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":34,"cost":0.0021}}"#;
         assert_eq!(
             parse_sse_event(event),
-            SseOutcome::Chunk(LlmChunk::Finish {
-                reason: "stop".to_string(),
-                usage: Some(LlmUsage {
-                    input_tokens: 12,
-                    output_tokens: 34,
-                }),
+            SseOutcome::Data(SseData {
+                usage: Some(usage(12, 34, Some(0.0021))),
+                model: Some("anthropic/claude-haiku-4.5".to_string()),
+                ..SseData::default()
             })
         );
     }
 
     #[test]
-    fn parse_sse_event_extracts_finish_without_usage_when_null() {
+    fn parse_sse_event_treats_null_usage_as_absent() {
         let event = r#"data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":null}"#;
+        assert_eq!(parse_sse_event(event), SseOutcome::Data(data(None, Some("stop"))));
+    }
+
+    #[test]
+    fn parse_sse_event_surfaces_a_mid_stream_provider_error() {
+        let event = r#"data: {"error":{"message":"Provider overloaded","code":502}}"#;
+        let SseOutcome::Data(parsed) = parse_sse_event(event) else {
+            panic!("expected data");
+        };
+        assert_eq!(parsed.error.as_deref(), Some("OpenRouter stream error: Provider overloaded"));
+    }
+
+    #[test]
+    fn stream_state_waits_for_the_usage_chunk_after_the_finish_reason() {
+        // OpenRouter order: content… → finish_reason → usage (empty choices) → [DONE].
+        let mut state = StreamState::default();
+        let s1 = state.step(SseOutcome::Data(SseData {
+            model: Some("m/served".to_string()),
+            ..data(Some("hi"), None)
+        }));
+        assert_eq!(s1.chunks, vec![LlmChunk::TextDelta { delta: "hi".to_string() }]);
+        assert!(!s1.terminal);
+
+        let s2 = state.step(SseOutcome::Data(data(None, Some("length"))));
+        assert!(s2.chunks.is_empty(), "finish must wait for usage");
+        assert!(!s2.terminal);
+
+        let s3 = state.step(SseOutcome::Data(SseData {
+            usage: Some(usage(1, 2, Some(0.5))),
+            ..SseData::default()
+        }));
+        assert!(s3.terminal);
         assert_eq!(
-            parse_sse_event(event),
-            SseOutcome::Chunk(LlmChunk::Finish {
-                reason: "stop".to_string(),
-                usage: None,
-            })
+            s3.chunks,
+            vec![LlmChunk::Finish {
+                reason: "length".to_string(),
+                usage: Some(usage(1, 2, Some(0.5))),
+                model: Some("m/served".to_string()),
+            }]
+        );
+    }
+
+    #[test]
+    fn stream_state_finishes_on_done_even_without_usage() {
+        let mut state = StreamState::default();
+        state.step(SseOutcome::Data(data(Some("x"), Some("stop"))));
+        let done = state.step(SseOutcome::Done);
+        assert!(done.terminal);
+        assert_eq!(
+            done.chunks,
+            vec![LlmChunk::Finish { reason: "stop".to_string(), usage: None, model: None }]
+        );
+    }
+
+    #[test]
+    fn stream_state_end_of_body_finishes_after_a_reason_and_errors_without_one() {
+        let mut finished = StreamState::default();
+        finished.step(SseOutcome::Data(data(None, Some("stop"))));
+        assert!(matches!(finished.end_of_body(), LlmChunk::Finish { .. }));
+
+        let mut cut = StreamState::default();
+        cut.step(SseOutcome::Data(data(Some("partial"), None)));
+        assert_eq!(
+            cut.end_of_body(),
+            LlmChunk::Error {
+                message: "OpenRouter stream ended without a finish signal".to_string(),
+                retryable: true,
+            }
+        );
+    }
+
+    #[test]
+    fn stream_state_turns_a_mid_stream_error_into_a_retryable_terminal_error() {
+        let mut state = StreamState::default();
+        let step = state.step(SseOutcome::Data(SseData {
+            error: Some("boom".to_string()),
+            ..SseData::default()
+        }));
+        assert!(step.terminal);
+        assert_eq!(
+            step.chunks,
+            vec![LlmChunk::Error { message: "boom".to_string(), retryable: true }]
         );
     }
 
@@ -428,6 +634,9 @@ mod tests {
                     },
                 ],
             }],
+            temperature: None,
+            reasoning_effort: None,
+            max_image_edge: None,
         };
 
         let body = build_request_body(&request);
@@ -469,6 +678,9 @@ mod tests {
                     }],
                 },
             ],
+            temperature: None,
+            reasoning_effort: None,
+            max_image_edge: None,
         };
 
         let body = build_request_body(&request);
@@ -480,5 +692,40 @@ mod tests {
         // The user role keeps the array-of-parts shape.
         assert!(body["messages"][1]["content"].is_array());
         assert_eq!(body["messages"][1]["content"][0]["text"], "review this");
+    }
+
+    fn text_request() -> LlmStreamRequest {
+        LlmStreamRequest {
+            model: "m".to_string(),
+            messages: vec![LlmMessage {
+                role: LlmRole::User,
+                parts: vec![LlmContentPart::Text { text: "q".to_string() }],
+            }],
+            temperature: None,
+            reasoning_effort: None,
+            max_image_edge: None,
+        }
+    }
+
+    #[test]
+    fn build_request_body_omits_unset_parameters_and_never_sends_max_tokens() {
+        let body = build_request_body(&text_request());
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("reasoning").is_none());
+        // Completeness over caps (user decision 2026-07-22).
+        assert!(body.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn build_request_body_sends_temperature_and_excluded_reasoning_when_set() {
+        let mut request = text_request();
+        request.temperature = Some(0.3);
+        request.reasoning_effort = Some("medium".to_string());
+        let body = build_request_body(&request);
+        assert_eq!(body["temperature"], 0.3);
+        assert_eq!(body["reasoning"]["effort"], "medium");
+        // The thinking is not streamed back to the HUD.
+        assert_eq!(body["reasoning"]["exclude"], true);
+        assert!(body.get("max_tokens").is_none());
     }
 }

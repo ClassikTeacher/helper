@@ -6,6 +6,8 @@
  * assembly (mixing in the language + user instructions) lives in the
  * application layer (`agent-prompt.ts`), so this stays plain data.
  */
+import type { ModelRoute } from './model-route';
+
 export type AgentId = 'solver' | 'reviewer';
 
 export interface Agent {
@@ -22,4 +24,9 @@ export interface Agent {
    * forcing a guess would only add room for error (user's requirement).
    */
   readonly requiresLanguage: boolean;
+  /**
+   * Task weight (R11) — the agent declares the route it needs, never a model
+   * slug. `ResilientLlm` resolves the route to a model chain + request profile.
+   */
+  readonly modelRoute: ModelRoute;
 }

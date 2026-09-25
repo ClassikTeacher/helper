@@ -11,17 +11,21 @@ import type { AppContainer } from './container.types';
  * use-cases only — architecture.md §8) can call it. `sendBatch` wraps this with
  * `overlay.show()` for the hotkey path.
  *
- * An empty send is only an error when there is NOTHING to send: no staged shots
- * AND no active recording. While recording, an empty batch is allowed — the
- * runner falls back to a single fresh capture so an audio-only question (voice +
- * whatever is on screen now) still works.
+ * An empty send is only an error when there is NOTHING to send: no staged
+ * shots, no pasted code (R15) AND no active recording. While recording, an
+ * empty batch is allowed — the runner falls back to a single fresh capture so
+ * an audio-only question (voice + whatever is on screen now) still works. With
+ * pasted code and no shots, the request is text-only.
  */
 export async function runSend(useCases: AppContainer['useCases']): Promise<void> {
-  const { screenshots, recording, agentId, language, instructions } = useHudStore.getState();
-  if (screenshots.length === 0 && !recording) {
+  const { screenshots, recording, agentId, language, instructions, codeText } =
+    useHudStore.getState();
+  if (screenshots.length === 0 && !recording && !codeText.trim()) {
     useHudStore
       .getState()
-      .fail('Нет скриншотов для анализа — сделайте хотя бы один (хоткей захвата).');
+      .fail(
+        'Нет данных для анализа — сделайте хотя бы один скриншот (хоткей захвата) или вставьте код текстом.',
+      );
     return;
   }
 
@@ -30,6 +34,7 @@ export async function runSend(useCases: AppContainer['useCases']): Promise<void>
     language,
     instructions,
     screenshots,
+    ...(codeText.trim() ? { codeText } : {}),
   });
 }
 

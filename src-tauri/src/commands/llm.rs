@@ -7,6 +7,7 @@ use tauri::ipc::Channel;
 use tauri::State;
 
 use crate::dto::{LlmChunk, LlmStreamRequest};
+use crate::infra::image::downscale_request_images;
 use crate::AppState;
 
 /// `SecretStore` key for the OpenRouter API key. MUST match
@@ -43,6 +44,22 @@ pub async fn llm_stream(
             });
             return Ok(());
         }
+    };
+
+    // Per-request image cap (R4/R17): decode/resample/encode is CPU work, so
+    // it runs off the async runtime. A failed join (panic) falls back to the
+    // original request — an oversized image is better than no answer.
+    let request = if request.max_image_edge.is_some() {
+        let original = request.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut request = request;
+            downscale_request_images(&mut request);
+            request
+        })
+        .await
+        .unwrap_or(original)
+    } else {
+        request
     };
 
     state.llm.stream_chat(&api_key, &request, &channel).await;

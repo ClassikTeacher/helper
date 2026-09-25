@@ -27,6 +27,12 @@ export class OpenRouterLlmAdapter implements LlmPort {
     const result = streamText({
       model: this.provider(request.model),
       messages: request.messages.map(toCoreMessage),
+      // Dev-only path: temperature is honored; reasoning and image downscaling
+      // are native-only features (the production `llm_stream` path) and are
+      // intentionally not emulated here.
+      ...(request.temperature !== undefined && !request.reasoningEffort
+        ? { temperature: request.temperature }
+        : {}),
       ...(request.signal ? { abortSignal: request.signal } : {}),
     });
 
@@ -47,9 +53,10 @@ export class OpenRouterLlmAdapter implements LlmPort {
     }
 
     const usage = await result.usage.catch(() => undefined);
+    const reason = await result.finishReason.catch(() => 'stop' as const);
     yield {
       type: 'finish',
-      reason: 'stop',
+      reason,
       ...(usage ? { usage: { inputTokens: usage.promptTokens, outputTokens: usage.completionTokens } } : {}),
     };
   }

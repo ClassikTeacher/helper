@@ -44,7 +44,7 @@ describe('useAnalyzeScreenshot', () => {
     });
 
     expect(useHudStore.getState().error).toBe(
-      'Нет скриншотов для анализа — сделайте хотя бы один (хоткей захвата).',
+      'Нет данных для анализа — сделайте хотя бы один скриншот (хоткей захвата) или вставьте код текстом.',
     );
     expect(useHudStore.getState().answer).toBe('');
   });
