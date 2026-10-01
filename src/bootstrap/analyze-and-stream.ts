@@ -14,6 +14,11 @@ export interface AnalyzeAndStreamParams {
   readonly instructions: string;
   /** The staged screenshot batch to analyze (phase 8); empty/omitted → the use-case captures one fresh. */
   readonly screenshots?: readonly Screenshot[];
+  /**
+   * Set to false to suppress the fresh-capture fallback on an empty batch — a
+   * text-only send, where the question/code lives entirely in `instructions`.
+   */
+  readonly captureIfEmpty?: boolean;
 }
 
 /**

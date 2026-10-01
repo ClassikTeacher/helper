@@ -1,5 +1,5 @@
 import { ResilientLlm } from '@/core/application/services/resilient-llm';
-import { buildModelChain } from './model-chain';
+import { buildModelChains } from './model-chain';
 import { AgentRunner } from '@/core/application/services/agent-runner';
 import { AnalyzeScreenshotUseCase } from '@/core/application/use-cases/analyze-screenshot.use-case';
 import { CaptureScreenshotUseCase } from '@/core/application/use-cases/capture-screenshot.use-case';
@@ -48,9 +48,11 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
 
   // Wrap the base LLM adapter in the resilient failover layer so a provider
   // outage / unavailable model transparently falls over to the next model in
-  // the chain (see ResilientLlm). An explicit `llm` override bypasses failover
-  // (tests inject exactly the adapter they want).
-  const llm: LlmPort = overrides.llm ?? new ResilientLlm(selectLlm(isTauri), buildModelChain());
+  // the chain (see ResilientLlm). One chain per route, so review can be pointed
+  // at a stronger model than plain questions via env alone (see model-chain.ts).
+  // An explicit `llm` override bypasses failover (tests inject exactly the
+  // adapter they want).
+  const llm: LlmPort = overrides.llm ?? new ResilientLlm(selectLlm(isTauri), buildModelChains());
 
   const secrets: SecretsPort =
     overrides.secrets ?? (isTauri ? new TauriSecretsAdapter() : new InMemorySecretsAdapter());

@@ -117,11 +117,13 @@ export function Hud() {
         onToggle={toggleRecording}
         disabled={streaming || transcribing}
       />
-      {/* Shows that the current answer used an extra hint, not just the screenshot. */}
+      {/* Shows the text that fed the current answer — a short hint, or the whole
+          pasted snippet on a screenshot-free send, hence the height cap +
+          scroll: a long paste must not push the answer off the HUD. */}
       {activeHint && (
         <div className="mb-3 flex items-start gap-2 rounded-md border border-indigo-700/50 bg-indigo-950/40 px-3 py-2 text-xs text-indigo-200">
           <span className="font-semibold uppercase tracking-wide text-indigo-400">Hint</span>
-          <span className="break-words">{activeHint}</span>
+          <span className="max-h-20 overflow-y-auto whitespace-pre-wrap break-words">{activeHint}</span>
         </div>
       )}
       <div className="mb-3 max-h-[320px] overflow-y-auto">

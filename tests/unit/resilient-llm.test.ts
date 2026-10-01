@@ -124,6 +124,55 @@ describe('ResilientLlm', () => {
     expect(() => new ResilientLlm(inner, [])).toThrow(/non-empty/);
     expect(() => new ResilientLlm(inner, ['', '  '])).toThrow(/non-empty/);
   });
+
+  // Per-route chains (agents-improvement.md R11): a request names a WEIGHT and
+  // gets the chain configured for it, so review can run on a stronger model.
+  describe('routes', () => {
+    const routed = { light: ['L1', 'L2'], heavy: ['H1', 'H2'] } as const;
+
+    it('walks the chain configured for the requested route', async () => {
+      const inner = new ScriptedLlm({ H1: [finish()] });
+      const llm = new ResilientLlm(inner, routed);
+
+      await collect(llm.stream({ route: 'heavy', messages: [] }));
+
+      expect(inner.attempts).toEqual(['H1']);
+    });
+
+    it('falls back within the requested route only, never across routes', async () => {
+      const inner = new ScriptedLlm({ H1: [err('H1 down', true)], H2: [finish()] });
+      const llm = new ResilientLlm(inner, routed);
+
+      await collect(llm.stream({ route: 'heavy', messages: [] }));
+
+      // H1 -> H2, and the light chain is never touched.
+      expect(inner.attempts).toEqual(['H1', 'H2']);
+    });
+
+    it('uses the default route when the request does not name one', async () => {
+      const inner = new ScriptedLlm({ L1: [finish()] });
+      const llm = new ResilientLlm(inner, routed);
+
+      await collect(llm.stream({ messages: [] }));
+
+      expect(inner.attempts).toEqual(['L1']);
+    });
+
+    it('treats a bare array as the same chain for every route', async () => {
+      const inner = new ScriptedLlm({ A: [finish()] });
+      const llm = new ResilientLlm(inner, ['A']);
+
+      await collect(llm.stream({ route: 'heavy', messages: [] }));
+      await collect(llm.stream({ route: 'light', messages: [] }));
+
+      expect(inner.attempts).toEqual(['A', 'A']);
+    });
+
+    it('rejects a route whose chain is empty', () => {
+      const inner = new ScriptedLlm({});
+      expect(() => new ResilientLlm(inner, { light: ['A'], heavy: [] })).toThrow(/heavy/);
+    });
+  });
 });
 
 describe('dedupeModels', () => {

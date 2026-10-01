@@ -1,4 +1,4 @@
-import type { ModelSlug } from '@/core/domain/model-route';
+import type { ModelRoute, ModelSlug } from '@/core/domain/model-route';
 
 export interface LlmImagePart {
   readonly kind: 'image';
@@ -24,6 +24,13 @@ export interface LlmStreamRequest {
    * adapters always receive a concrete slug from `ResilientLlm`.
    */
   readonly model?: ModelSlug;
+  /**
+   * Which class of model should serve this request (see `ModelRoute`). Callers
+   * name a WEIGHT, not a model: agents pass their `Agent.modelRoute`, plain text
+   * prompts leave it unset and get `DEFAULT_ROUTE`. `ResilientLlm` resolves it
+   * to a concrete chain, so the adapters below never see a route — only a slug.
+   */
+  readonly route?: ModelRoute;
   readonly messages: readonly LlmMessage[];
   readonly signal?: AbortSignal;
 }

@@ -11,17 +11,25 @@ import type { AppContainer } from './container.types';
  * use-cases only — architecture.md §8) can call it. `sendBatch` wraps this with
  * `overlay.show()` for the hotkey path.
  *
- * An empty send is only an error when there is NOTHING to send: no staged shots
- * AND no active recording. While recording, an empty batch is allowed — the
- * runner falls back to a single fresh capture so an audio-only question (voice +
- * whatever is on screen now) still works.
+ * A send is only an error when there is NOTHING to send: no staged shots, no
+ * active recording, AND an empty input. Any ONE of the three is enough:
+ * - shots staged → analyze them;
+ * - recording → an empty batch is allowed, the runner falls back to a single
+ *   fresh capture so an audio-only question (voice + whatever is on screen now)
+ *   still works;
+ * - text typed/pasted into the input with nothing else → a TEXT-ONLY send: the
+ *   code or task IS the text, so no screenshot is required and none is grabbed
+ *   (`captureIfEmpty: false`) — the current screen would only be noise.
  */
 export async function runSend(useCases: AppContainer['useCases']): Promise<void> {
   const { screenshots, recording, agentId, language, instructions } = useHudStore.getState();
-  if (screenshots.length === 0 && !recording) {
+  const hasText = instructions.trim().length > 0;
+  if (screenshots.length === 0 && !recording && !hasText) {
     useHudStore
       .getState()
-      .fail('Нет скриншотов для анализа — сделайте хотя бы один (хоткей захвата).');
+      .fail(
+        'Нечего анализировать — сделайте скриншот (хоткей захвата) или введите текст задачи в поле ввода.',
+      );
     return;
   }
 
@@ -30,6 +38,8 @@ export async function runSend(useCases: AppContainer['useCases']): Promise<void>
     language,
     instructions,
     screenshots,
+    // Text-only: nothing staged and no audio — don't grab the screen.
+    ...(screenshots.length === 0 && !recording ? { captureIfEmpty: false } : {}),
   });
 }
 

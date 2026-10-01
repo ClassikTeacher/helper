@@ -93,6 +93,7 @@ beforeEach(() => {
   useHudStore.setState({
     visible: false,
     screenshots: [],
+    instructions: '',
     error: null,
     answer: '',
     streaming: false,
@@ -318,7 +319,7 @@ describe('registerHotkeys', () => {
     expect(useHudStore.getState().answer).toContain('fake answer');
   });
 
-  it('send hotkey with an empty batch surfaces a clear error and does not analyze', async () => {
+  it('send hotkey with nothing staged and an empty input surfaces a clear error and does not analyze', async () => {
     const hotkey = new FakeHotkeyPort();
     const overlay = createFakeOverlay();
     const analyzeScreenshot = createAnalyzeScreenshot();
@@ -328,10 +329,30 @@ describe('registerHotkeys', () => {
     hotkey.press(SEND_ACCELERATOR);
     await flush();
 
-    expect(useHudStore.getState().error).toContain('Нет скриншотов');
+    expect(useHudStore.getState().error).toContain('Нечего анализировать');
     expect(analyzeSpy).not.toHaveBeenCalled();
     // The HUD is shown so the user sees the error.
     expect(overlay.show).toHaveBeenCalled();
+  });
+
+  it('send hotkey with typed text but no screenshot analyzes the text alone', async () => {
+    // The input already carries the code/task (pasted, or a question typed by
+    // hand): requiring a screenshot on top of it would block a legitimate send.
+    const hotkey = new FakeHotkeyPort();
+    const overlay = createFakeOverlay();
+    const screenCapture = new FakeScreenCaptureAdapter();
+    const captureSpy = vi.spyOn(screenCapture, 'capture');
+    const analyzeScreenshot = createAnalyzeScreenshot(new FakeLlmAdapter('fake answer'), screenCapture);
+
+    await registerHotkeys(createContainer(hotkey, overlay, undefined, analyzeScreenshot));
+    useHudStore.getState().setInstructions('func main() { println(1) }');
+    hotkey.press(SEND_ACCELERATOR);
+    await flush();
+
+    expect(useHudStore.getState().error).toBeNull();
+    expect(useHudStore.getState().answer).toContain('fake answer');
+    // Text-only: the screen is irrelevant here, so nothing is captured.
+    expect(captureSpy).not.toHaveBeenCalled();
   });
 
   it('never hides the HUD before capturing — content protection keeps it out of the shot', async () => {

@@ -6,6 +6,8 @@
  * assembly (mixing in the language + user instructions) lives in the
  * application layer (`agent-prompt.ts`), so this stays plain data.
  */
+import type { ModelRoute } from './model-route';
+
 export type AgentId = 'solver' | 'reviewer';
 
 export interface Agent {
@@ -15,6 +17,14 @@ export interface Agent {
   readonly description: string;
   /** Base system prompt describing the agent's job. */
   readonly systemPrompt: string;
+  /**
+   * Which class of model serves this agent (see `ModelRoute`). The agent names
+   * a WEIGHT, never a concrete model — the slug behind each route is env-driven
+   * (`bootstrap/model-chain.ts`), so making review run on a stronger model is a
+   * config change, not a code change. Today both routes resolve to the same
+   * chain, so this changes nothing at runtime yet.
+   */
+  readonly modelRoute: ModelRoute;
   /**
    * Whether the UI offers a programming-language selector for this agent.
    * The solver needs it — a bare text task may not state a language. The

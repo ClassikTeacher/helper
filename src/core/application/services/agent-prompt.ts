@@ -16,6 +16,13 @@ export interface AgentInvocation {
    * May be empty. Attached as a clearly-labeled data block, never as instructions.
    */
   readonly transcript?: string;
+  /**
+   * Whether image content parts accompany this text. Defaults to true (the
+   * screenshot-first flow). False for a text-only send — the user typed the
+   * code/task straight into the input and staged no shots — so the text must
+   * not tell the model to "analyze the attached screenshot" that isn't there.
+   */
+  readonly hasScreenshots?: boolean;
 }
 
 export interface BuiltPrompt {
@@ -38,14 +45,18 @@ export function buildAgentPrompt({
   language,
   instructions,
   transcript,
+  hasScreenshots = true,
 }: AgentInvocation): BuiltPrompt {
   const lines: string[] = [];
+  // What the model should read the task off: the image(s) normally, the text
+  // itself on a text-only send.
+  const source = hasScreenshots ? 'screenshot' : 'task text';
 
   if (agent.requiresLanguage) {
     lines.push(
       language === 'all'
-        ? 'Programming language: not specified — infer the most appropriate one from the screenshot and use it; do not narrate the detection.'
-        : `Target programming language: ${languageLabel(language)}. Write the solution in this language unless the screenshot clearly requires another.`,
+        ? `Programming language: not specified — infer the most appropriate one from the ${source} and use it; do not narrate the detection.`
+        : `Target programming language: ${languageLabel(language)}. Write the solution in this language unless the ${source} clearly requires another.`,
     );
   }
 
@@ -65,7 +76,11 @@ export function buildAgentPrompt({
     );
   }
 
-  lines.push('Analyze the attached screenshot and respond following your role.');
+  lines.push(
+    hasScreenshots
+      ? 'Analyze the attached screenshot and respond following your role.'
+      : 'No screenshot is attached this time — the code or task to work on is the text above. Work from that text alone and respond following your role.',
+  );
   // Answer language is always Russian in the MVP (multilingual output is out of
   // scope — user decision 2026-07-04). Code, identifiers, and console output stay
   // in their original language; only the prose (explanations, review comments)
@@ -77,15 +92,27 @@ export function buildAgentPrompt({
   return { system: agent.systemPrompt, userText: lines.join('\n') };
 }
 
+/** Longest instruction excerpt kept in a stored conversation's title. */
+const TITLE_INSTRUCTIONS_LIMIT = 80;
+
 /**
  * A short, human-readable summary of an invocation — used as the stored
  * conversation's "prompt"/title (the raw system prompt would be noise there).
+ *
+ * The instructions are excerpted, not copied whole: on a screenshot-free send
+ * they hold the entire pasted snippet, and a title that long is unreadable in a
+ * history list. The full text still went to the model — this is display only.
  */
 export function summarizeInvocation({ agent, language, instructions }: AgentInvocation): string {
   const head =
     agent.requiresLanguage && language !== 'all'
       ? `${agent.name} (${languageLabel(language)})`
       : agent.name;
-  const trimmed = instructions.trim();
-  return trimmed ? `${head} — ${trimmed}` : head;
+  const trimmed = instructions.trim().replace(/\s+/g, ' ');
+  if (!trimmed) return head;
+  const excerpt =
+    trimmed.length > TITLE_INSTRUCTIONS_LIMIT
+      ? `${trimmed.slice(0, TITLE_INSTRUCTIONS_LIMIT).trimEnd()}…`
+      : trimmed;
+  return `${head} — ${excerpt}`;
 }

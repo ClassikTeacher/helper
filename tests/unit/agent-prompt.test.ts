@@ -71,6 +71,32 @@ describe('buildAgentPrompt', () => {
     expect(none.userText).not.toContain('spoken context');
     expect(blank.userText).not.toContain('spoken context');
   });
+
+  it('points the model at the task text, not a screenshot, when none is attached', () => {
+    // Text-only send: the code/task lives in the instructions, so the text must
+    // not order the model to analyze an image that is not there.
+    const { userText } = buildAgentPrompt({
+      agent: AGENTS.solver,
+      language: 'all',
+      instructions: 'const a = 1',
+      hasScreenshots: false,
+    });
+
+    expect(userText).toContain('No screenshot is attached');
+    expect(userText).toContain('infer the most appropriate one from the task text');
+    expect(userText).not.toContain('Analyze the attached screenshot');
+  });
+
+  it('keeps the screenshot wording by default', () => {
+    const { userText } = buildAgentPrompt({
+      agent: AGENTS.solver,
+      language: 'all',
+      instructions: '',
+    });
+
+    expect(userText).toContain('Analyze the attached screenshot');
+    expect(userText).not.toContain('No screenshot is attached');
+  });
 });
 
 describe('summarizeInvocation', () => {
@@ -84,6 +110,23 @@ describe('summarizeInvocation', () => {
     expect(summarizeInvocation({ agent: AGENTS.solver, language: 'all', instructions: '' })).toBe(
       'Solve',
     );
+  });
+
+  it('excerpts long instructions instead of titling a conversation with a whole snippet', () => {
+    // A screenshot-free send puts the entire pasted code in `instructions`;
+    // the stored title must stay a title.
+    const code = 'func main() {\n\tprintln("a very long pasted snippet that keeps going and going well past any sane title length")\n}';
+
+    const summary = summarizeInvocation({
+      agent: AGENTS.reviewer,
+      language: 'all',
+      instructions: code,
+    });
+
+    expect(summary.startsWith('Review — func main() {')).toBe(true);
+    expect(summary.endsWith('…')).toBe(true);
+    expect(summary).not.toContain('\n');
+    expect(summary.length).toBeLessThan(100);
   });
 
   it('never shows a language for the reviewer', () => {

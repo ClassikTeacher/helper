@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAnalyzeScreenshot } from '@/ui/hooks/useAnalyzeScreenshot';
 import { ServicesProvider } from '@/bootstrap/ServicesProvider';
@@ -30,7 +30,7 @@ beforeEach(() => {
 });
 
 describe('useAnalyzeScreenshot', () => {
-  it('fails clearly instead of silently capturing when no screenshot is pinned yet', async () => {
+  it('fails clearly instead of silently capturing when there is neither a screenshot nor input text', async () => {
     // Capturing here (rather than reusing a pinned shot) would risk framing
     // the now-visible HUD itself, since nothing hides it for this path.
     const container = createContainer({
@@ -44,8 +44,42 @@ describe('useAnalyzeScreenshot', () => {
     });
 
     expect(useHudStore.getState().error).toBe(
-      'Нет скриншотов для анализа — сделайте хотя бы один (хоткей захвата).',
+      'Нечего анализировать — сделайте скриншот (хоткей захвата) или введите текст задачи в поле ввода.',
     );
+    expect(useHudStore.getState().answer).toBe('');
+  });
+
+  it('runs on input text alone — a screenshot is not required when code is pasted in', async () => {
+    // The Run button must work for a paste-only send (the reviewer's main
+    // text path); demanding a screenshot on top of pasted code blocked it.
+    const screenCapture = new FakeScreenCaptureAdapter();
+    const captureSpy = vi.spyOn(screenCapture, 'capture');
+    const container = createContainer({ llm: new FakeLlmAdapter('review result'), screenCapture });
+    useHudStore.getState().setInstructions('func Handle() error { return nil }');
+    const { result } = renderHook(() => useAnalyzeScreenshot(), { wrapper: wrapperWithContainer(container) });
+
+    await act(async () => {
+      await result.current();
+    });
+
+    expect(useHudStore.getState().error).toBeNull();
+    expect(useHudStore.getState().answer).toContain('review result');
+    expect(captureSpy).not.toHaveBeenCalled();
+  });
+
+  it('ignores whitespace-only input — blanks are not a task', async () => {
+    const container = createContainer({
+      llm: new FakeLlmAdapter('should not be reached'),
+      screenCapture: new FakeScreenCaptureAdapter(),
+    });
+    useHudStore.getState().setInstructions('   \n  ');
+    const { result } = renderHook(() => useAnalyzeScreenshot(), { wrapper: wrapperWithContainer(container) });
+
+    await act(async () => {
+      await result.current();
+    });
+
+    expect(useHudStore.getState().error).toContain('Нечего анализировать');
     expect(useHudStore.getState().answer).toBe('');
   });
 

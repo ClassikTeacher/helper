@@ -1,11 +1,17 @@
 import type { LlmChunk, LlmPort, LlmStreamRequest } from '@/core/application/ports/llm.port';
-import type { ModelSlug } from '@/core/domain/model-route';
+import { DEFAULT_ROUTE, MODEL_ROUTES, uniformChains } from '@/core/domain/model-route';
+import type { ModelChains, ModelSlug } from '@/core/domain/model-route';
 
 /**
  * Failover decorator over an `LlmPort`. Owns model selection: it walks an
  * ordered chain of models (primary first, then fallbacks) and, when a model
  * fails with a *retryable* provider-side error BEFORE any content has streamed,
  * transparently retries the request on the next model in the chain.
+ *
+ * There is one chain PER ROUTE (`request.route`, defaulting to `DEFAULT_ROUTE`),
+ * so review can be served by a stronger model than plain questions without any
+ * caller learning a model slug — see `ModelRoute`. Passing a bare array
+ * configures the same chain for every route, which is the current setup.
  *
  * Why "before any content": once we've yielded `text-delta`s to the caller
  * (already rendered in the HUD), we can't cleanly swap models mid-answer
@@ -21,25 +27,34 @@ import type { ModelSlug } from '@/core/domain/model-route';
  * tests/unit/resilient-llm.test.ts).
  */
 export class ResilientLlm implements LlmPort {
-  private readonly chain: readonly ModelSlug[];
+  private readonly chains: ModelChains;
 
   constructor(
     private readonly inner: LlmPort,
-    chain: readonly ModelSlug[],
+    chains: ModelChains | readonly ModelSlug[],
   ) {
-    const deduped = dedupeModels(chain);
-    if (deduped.length === 0) {
-      throw new Error('ResilientLlm requires a non-empty model chain');
+    const byRoute = Array.isArray(chains) ? uniformChains(chains) : (chains as ModelChains);
+    const deduped = Object.fromEntries(
+      MODEL_ROUTES.map((route) => [route, dedupeModels(byRoute[route] ?? [])]),
+    ) as Record<(typeof MODEL_ROUTES)[number], ModelSlug[]>;
+
+    for (const route of MODEL_ROUTES) {
+      if (deduped[route].length === 0) {
+        throw new Error(`ResilientLlm requires a non-empty model chain (route "${route}")`);
+      }
     }
-    this.chain = deduped;
+    this.chains = deduped;
   }
 
   async *stream(request: LlmStreamRequest): AsyncIterable<LlmChunk> {
+    // Pick the chain for the requested route (plain prompts don't name one).
+    const configured = this.chains[request.route ?? DEFAULT_ROUTE];
+
     // A caller-supplied model (rare — tests/dev) becomes the first attempt,
     // then the configured chain follows as fallbacks; otherwise use the chain
     // as-is. De-duplicated so a primary that also appears in the fallback list
     // isn't tried twice.
-    const chain = request.model ? dedupeModels([request.model, ...this.chain]) : this.chain;
+    const chain = request.model ? dedupeModels([request.model, ...configured]) : configured;
 
     for (const [i, model] of chain.entries()) {
       const isLast = i === chain.length - 1;

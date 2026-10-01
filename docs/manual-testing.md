@@ -37,7 +37,9 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 - [ ] Pressing CAPTURE 1–5 times stacks thumbnails in the strip with a "N/5" counter; a 6th press does not add a 6th (cap); individual "✕" removes a shot, "Очистить всё" clears the batch
 - [ ] Pressing the SEND hotkey (`Ctrl+Alt+Enter` by default; override via `VITE_SEND_ACCELERATOR`) — or clicking Run — analyzes the whole staged batch at once and **streams an analysis** (main scenario, plan.md §4); the now-visible HUD itself never shows up in the analyzed images (content-protected)
 - [ ] Tokens stream progressively into the HUD (not all at once)
-- [ ] Pressing SEND / Run with an empty batch shows "Нет скриншотов для анализа — сделайте хотя бы один (хоткей захвата)." instead of silently capturing
+- [ ] Pressing SEND / Run with an empty batch AND an empty input shows "Нечего анализировать — сделайте скриншот (хоткей захвата) или введите текст задачи в поле ввода." instead of silently capturing
+- [ ] **Text-only send:** paste a multi-line code snippet into the input with NO screenshot staged and press Run — it analyzes the pasted text (no screenshot required), the paste keeps its line breaks, and no screen capture happens; verify for both Solve and Review
+- [ ] In the input, Enter submits and Shift+Enter inserts a newline
 - [ ] Works for BOTH agents: repeat capture→send with Solve and with Review selected in the HUD
 - [ ] Missing/invalid API key surfaces a readable error in the HUD (no silent failure)
 - [ ] If an error arrives mid-stream (e.g. kill network), any partial answer already streamed stays visible alongside the error ("Interrupted: …"), not replaced by it
