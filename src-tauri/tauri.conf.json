@@ -16,6 +16,8 @@
         "title": "AI-Helper",
         "width": 600,
         "height": 520,
+        "minWidth": 420,
+        "minHeight": 360,
         "transparent": true,
         "decorations": false,
         "alwaysOnTop": true,
