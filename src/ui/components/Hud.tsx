@@ -58,117 +58,125 @@ export function Hud() {
   const selectedAgent = resolveAgent(agentId);
 
   return (
-    <div className="mx-auto mt-8 w-[540px] rounded-xl border border-neutral-700 bg-neutral-900/95 p-4 shadow-2xl backdrop-blur">
-      {/*
-        The header doubles as the window's drag handle. `data-tauri-drag-region`
-        tells the OS to move the (undecorated) window when this element is
-        dragged — the only way to reposition a frameless HUD.
+    // Fills its parent (the window minus App's gutter) as a flex column: the
+    // controls above and the prompt below keep their natural height, the answer
+    // area in between takes whatever is left — so resizing the window resizes
+    // the answer area instead of leaving a fixed-size panel inside it.
+    <div className="flex h-full w-full flex-col overflow-hidden rounded-xl border border-neutral-700 bg-neutral-900/95 p-4 shadow-2xl backdrop-blur">
+      <div className="shrink-0">
+        {/*
+          The header doubles as the window's drag handle. `data-tauri-drag-region`
+          tells the OS to move the (undecorated) window when this element is
+          dragged — the only way to reposition a frameless HUD.
 
-        The value is `"deep"`, not a bare attribute, on purpose: a bare attribute
-        only drags on a *direct* click on that exact element, and React renders
-        a valueless `data-tauri-drag-region` as `="true"` (an undocumented value)
-        — which left most of this thin header (its child wrappers) non-draggable.
-        `"deep"` makes the whole header subtree a drag surface; Tauri still lets
-        interactive elements block it, so the ⚙ button stays clickable and does
-        not start a drag. `select-none` stops text selection while dragging. The
-        drag cursor is intentionally NOT shown (no `cursor-move`) — the HUD keeps
-        one constant cursor everywhere (see the global rule in styles/index.css).
+          The value is `"deep"`, not a bare attribute, on purpose: a bare attribute
+          only drags on a *direct* click on that exact element, and React renders
+          a valueless `data-tauri-drag-region` as `="true"` (an undocumented value)
+          — which left most of this thin header (its child wrappers) non-draggable.
+          `"deep"` makes the whole header subtree a drag surface; Tauri still lets
+          interactive elements block it, so the ⚙ button stays clickable and does
+          not start a drag. `select-none` stops text selection while dragging. The
+          drag cursor is intentionally NOT shown (no `cursor-move`) — the HUD keeps
+          one constant cursor everywhere (see the global rule in styles/index.css).
 
-        A drag region also maximizes the window on double-click (Tauri default),
-        which is unwanted for a small fixed HUD — that is disabled declaratively
-        via `maximizable: false` in tauri.conf.json (resizing from edges still
-        works, since `resizable` stays true).
-      */}
-      <div
-        data-tauri-drag-region="deep"
-        className="mb-3 flex select-none items-center justify-between"
-      >
-        <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
-          AI-Helper
-        </span>
-        <div className="flex items-center gap-3">
-          {streaming && (
-            <span className="text-xs text-indigo-400">
-              {phase === 'reading-screen' ? 'распознаю код…' : 'streaming…'}
-            </span>
-          )}
-          {streaming && (
+          A drag region also maximizes the window on double-click (Tauri default),
+          which is unwanted for an overlay HUD — that is disabled declaratively
+          via `maximizable: false` in tauri.conf.json (resizing from edges still
+          works, since `resizable` stays true).
+        */}
+        <div
+          data-tauri-drag-region="deep"
+          className="mb-3 flex select-none items-center justify-between"
+        >
+          <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+            AI-Helper
+          </span>
+          <div className="flex items-center gap-3">
+            {streaming && (
+              <span className="text-xs text-indigo-400">
+                {phase === 'reading-screen' ? 'распознаю код…' : 'streaming…'}
+              </span>
+            )}
+            {streaming && (
+              <button
+                type="button"
+                onClick={stop}
+                aria-label="Остановить ответ"
+                title="Остановить (Esc)"
+                className="rounded border border-neutral-600 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-800"
+              >
+                ■ Стоп
+              </button>
+            )}
             <button
               type="button"
-              onClick={stop}
-              aria-label="Остановить ответ"
-              title="Остановить (Esc)"
-              className="rounded border border-neutral-600 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-800"
+              onClick={() => setSettingsOpen((open) => !open)}
+              aria-label="Settings"
+              aria-pressed={settingsOpen}
+              className="text-sm text-neutral-400 hover:text-neutral-200"
             >
-              ■ Стоп
+              ⚙
             </button>
+          </div>
+        </div>
+        {hotkeyError && (
+          <div className="mb-3 rounded-md border border-amber-600/50 bg-amber-950/50 px-3 py-2 text-xs text-amber-300">
+            Не удалось зарегистрировать глобальный хоткей: {hotkeyError}
+          </div>
+        )}
+        {!settingsOpen && apiKey.hasKey === false && (
+          <div className="mb-3 rounded-md border border-amber-600/50 bg-amber-950/50 px-3 py-2 text-xs text-amber-300">
+            No OpenRouter API key configured — click ⚙ to add one.
+          </div>
+        )}
+        {settingsOpen && (
+          <SettingsPanel hasKey={apiKey.hasKey} status={apiKey.status} error={apiKey.error} onSave={apiKey.save} />
+        )}
+        {/* Agent switch + (solver-only) language selector. */}
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <AgentSwitch agents={AGENT_LIST} selected={agentId} disabled={streaming} onSelect={setAgentId} />
+          {selectedAgent.requiresLanguage && (
+            <LanguageSelect value={language} disabled={streaming} onChange={setLanguage} />
           )}
-          <button
-            type="button"
-            onClick={() => setSettingsOpen((open) => !open)}
-            aria-label="Settings"
-            aria-pressed={settingsOpen}
-            className="text-sm text-neutral-400 hover:text-neutral-200"
-          >
-            ⚙
-          </button>
         </div>
-      </div>
-      {hotkeyError && (
-        <div className="mb-3 rounded-md border border-amber-600/50 bg-amber-950/50 px-3 py-2 text-xs text-amber-300">
-          Не удалось зарегистрировать глобальный хоткей: {hotkeyError}
-        </div>
-      )}
-      {!settingsOpen && apiKey.hasKey === false && (
-        <div className="mb-3 rounded-md border border-amber-600/50 bg-amber-950/50 px-3 py-2 text-xs text-amber-300">
-          No OpenRouter API key configured — click ⚙ to add one.
-        </div>
-      )}
-      {settingsOpen && (
-        <SettingsPanel hasKey={apiKey.hasKey} status={apiKey.status} error={apiKey.error} onSave={apiKey.save} />
-      )}
-      {/* Agent switch + (solver-only) language selector. */}
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <AgentSwitch agents={AGENT_LIST} selected={agentId} disabled={streaming} onSelect={setAgentId} />
-        {selectedAgent.requiresLanguage && (
-          <LanguageSelect value={language} disabled={streaming} onChange={setLanguage} />
+        <ScreenshotStrip
+          screenshots={screenshots}
+          max={MAX_SCREENSHOTS}
+          onRemove={removeScreenshot}
+          onClear={clearScreenshots}
+        />
+        <CodeTextInput value={codeText} disabled={streaming} onChange={setCodeText} />
+        <AudioControls
+          recording={recording}
+          transcribing={transcribing}
+          transcript={transcript}
+          onToggle={toggleRecording}
+          disabled={streaming || transcribing}
+          elapsedSecs={recordingElapsed}
+          windowSecs={recordingWindowSecs}
+        />
+        {/* Shows that the current answer used an extra hint, not just the screenshot. */}
+        {activeHint && (
+          <div className="mb-3 flex items-start gap-2 rounded-md border border-indigo-700/50 bg-indigo-950/40 px-3 py-2 text-xs text-indigo-200">
+            <span className="font-semibold uppercase tracking-wide text-indigo-400">Hint</span>
+            <span className="break-words">{activeHint}</span>
+          </div>
         )}
       </div>
-      <ScreenshotStrip
-        screenshots={screenshots}
-        max={MAX_SCREENSHOTS}
-        onRemove={removeScreenshot}
-        onClear={clearScreenshots}
-      />
-      <CodeTextInput value={codeText} disabled={streaming} onChange={setCodeText} />
-      <AudioControls
-        recording={recording}
-        transcribing={transcribing}
-        transcript={transcript}
-        onToggle={toggleRecording}
-        disabled={streaming || transcribing}
-        elapsedSecs={recordingElapsed}
-        windowSecs={recordingWindowSecs}
-      />
-      {/* Shows that the current answer used an extra hint, not just the screenshot. */}
-      {activeHint && (
-        <div className="mb-3 flex items-start gap-2 rounded-md border border-indigo-700/50 bg-indigo-950/40 px-3 py-2 text-xs text-indigo-200">
-          <span className="font-semibold uppercase tracking-wide text-indigo-400">Hint</span>
-          <span className="break-words">{activeHint}</span>
-        </div>
-      )}
-      <div className="mb-3 max-h-[320px] overflow-y-auto">
+      <div className="mb-3 min-h-0 flex-1 overflow-y-auto">
         <MessageList answer={answer} streaming={streaming} error={error} stopped={stopped} />
         <RunInfoLine info={lastRun} />
       </div>
-      <PromptInput
-        value={instructions}
-        disabled={streaming}
-        onChange={setInstructions}
-        onSubmit={analyze}
-        onFollowUp={followUp}
-        canFollowUp={hasThread}
-      />
+      <div className="shrink-0">
+        <PromptInput
+          value={instructions}
+          disabled={streaming}
+          onChange={setInstructions}
+          onSubmit={analyze}
+          onFollowUp={followUp}
+          canFollowUp={hasThread}
+        />
+      </div>
     </div>
   );
 }
