@@ -1,0 +1,18 @@
+{
+  "id": "solve-longest-substring",
+  "kind": "solve",
+  "agent": "solver",
+  "language": "go",
+  "source": "task.md",
+  "heldOut": false,
+  "notes": "LeetCode-style task with a Go stub; the language selector is set to Go. Criteria, not defects: coverage = how fully the answer satisfies each.",
+  "findings": [
+    { "id": "S1", "severity": "critical", "origin": "seeded", "lines": [3, 3], "title": "Correct O(n) algorithm", "detail": "Sliding window with a last-seen index per character (or a set with a moving left bound); single pass, O(n) time." },
+    { "id": "S2", "severity": "critical", "origin": "seeded", "lines": [3, 3], "title": "Left bound never moves backwards", "detail": "left = max(left, last[c]+1) (or equivalent). Without the max, input like \"abba\" gives a wrong answer." },
+    { "id": "S3", "severity": "high", "origin": "seeded", "lines": [23, 25], "title": "Go code matching the stub", "detail": "Complete, compilable Go implementing func lengthOfLongestSubstring(s string) int." },
+    { "id": "S4", "severity": "high", "origin": "seeded", "lines": [20, 20], "title": "Empty string returns 0", "detail": "s.length can be 0; the code returns 0 without special-case bugs." },
+    { "id": "S5", "severity": "medium", "origin": "seeded", "lines": [3, 3], "title": "Complexity stated", "detail": "States O(n) time and O(min(n, alphabet)) / O(1)-bounded extra space." },
+    { "id": "S6", "severity": "medium", "origin": "seeded", "lines": [1, 1], "title": "Format: task line, code first", "detail": "Starts with one short line naming the task (e.g. \"Задача: …\"); the code block comes before the explanation." },
+    { "id": "S7", "severity": "low", "origin": "seeded", "lines": [1, 1], "title": "Brief explanation in Russian", "detail": "Explanation prose is in Russian and short." }
+  ]
+}

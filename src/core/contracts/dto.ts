@@ -26,8 +26,13 @@ export interface CaptureRegionDto {
 export interface CaptureRequestDto {
   /** Optional sub-region; omit for full screen. */
   readonly region?: CaptureRegionDto;
-  /** Target display index; omit for primary. */
+  /** Target display index. */
   readonly displayIndex?: number;
+  /**
+   * Target display by OS device name. With neither this nor `displayIndex`,
+   * native captures the monitor under the mouse cursor (P0).
+   */
+  readonly displayName?: string;
 }
 
 export interface CaptureResultDto {
@@ -82,19 +87,37 @@ export interface LlmStreamRequestDto {
   /** OpenRouter model slug chosen by the resilient LLM layer (webview side). */
   readonly model: string;
   readonly messages: readonly LlmMessageDto[];
+  /** Sampling temperature; omitted = not sent to the provider (R16). */
+  readonly temperature?: number;
+  /** OpenRouter `reasoning.effort` ('low'|'medium'|'high'); omitted = no reasoning (R16). */
+  readonly reasoningEffort?: string;
+  /** Longest image edge in px; native downscales larger images before sending (R4/R17). */
+  readonly maxImageEdge?: number;
+  /** Client-generated id so `llm_cancel` can stop this request. */
+  readonly requestId?: string;
+}
+
+export interface LlmCancelRequestDto {
+  readonly requestId: string;
 }
 
 export interface LlmUsageDto {
   readonly inputTokens: number;
   readonly outputTokens: number;
-  /** Request cost in USD, when the provider reports it. Mirrors `LlmUsage.cost` in dto.rs. */
+  /** USD cost reported by OpenRouter (`usage.cost`), when present. */
   readonly cost?: number;
 }
 
 /** Discriminated union streamed over the Channel; terminal chunk is finish|error. */
 export type LlmChunkDto =
   | { readonly type: 'text-delta'; readonly delta: string }
-  | { readonly type: 'finish'; readonly reason: string; readonly usage?: LlmUsageDto }
+  | {
+      readonly type: 'finish';
+      readonly reason: string;
+      readonly usage?: LlmUsageDto;
+      /** Model slug the provider reports as having served the request (R19). */
+      readonly model?: string;
+    }
   // `retryable` tells the webview whether to fail over to the next model in the
   // chain (transient/provider-side error) or surface the failure as-is (missing
   // key, auth, bad request). Mirrors `LlmChunk::Error.retryable` in dto.rs.
@@ -115,6 +138,11 @@ export interface SecretSetRequestDto {
 // `audioStartCapture`/`audioStopCapture` take no payload. `transcribeAudio`
 // returns this. The recorded audio stays in native; only the text crosses the
 // seam. Mirror of `TranscribeResult` in dto.rs.
+/** Result of `audioStartCapture`: the recording keeps only the LAST `maxSeconds`. */
+export interface AudioStartResultDto {
+  readonly maxSeconds: number;
+}
+
 export interface TranscribeResultDto {
   /** Recognized transcript (may be empty if nothing was captured). */
   readonly text: string;

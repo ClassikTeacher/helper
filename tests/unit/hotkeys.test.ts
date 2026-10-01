@@ -6,6 +6,7 @@ import {
   CAPTURE_ACCELERATOR,
   SEND_ACCELERATOR,
   RECORD_ACCELERATOR,
+  PASTE_CODE_ACCELERATOR,
 } from '@/bootstrap/hotkeys';
 import { CaptureScreenshotUseCase } from '@/core/application/use-cases/capture-screenshot.use-case';
 import { AnalyzeScreenshotUseCase } from '@/core/application/use-cases/analyze-screenshot.use-case';
@@ -18,7 +19,17 @@ import { useHudStore, MAX_SCREENSHOTS } from '@/ui/store/hud.store';
 import type { HotkeyHandler, HotkeyPort } from '@/core/application/ports/hotkey.port';
 import type { OverlayPort } from '@/core/application/ports/overlay.port';
 import type { AudioTranscriptionPort } from '@/core/application/ports/audio-transcription.port';
+import type { ClipboardPort } from '@/core/application/ports/clipboard.port';
 import type { AppContainer } from '@/bootstrap/container.types';
+
+/** Clipboard fake whose text a test can set. */
+function createFakeClipboard(text = ''): ClipboardPort & { text: string } {
+  const clipboard = {
+    text,
+    readText: async () => clipboard.text,
+  };
+  return clipboard;
+}
 
 /** Builds a real (fake-adapter-backed) AnalyzeScreenshotUseCase for the container fixture. */
 function createAnalyzeScreenshot(
@@ -79,9 +90,10 @@ function createContainer(
   captureScreenshot = new CaptureScreenshotUseCase(new FakeScreenCaptureAdapter()),
   analyzeScreenshot = createAnalyzeScreenshot(),
   transcribeAudio = new TranscribeAudioUseCase(new FakeAudioAdapter()),
+  clipboard: ClipboardPort = createFakeClipboard(),
 ): Pick<AppContainer, 'platform' | 'useCases'> {
   return {
-    platform: { hotkey, overlay },
+    platform: { hotkey, overlay, clipboard },
     useCases: { captureScreenshot, analyzeScreenshot, transcribeAudio } as AppContainer['useCases'],
   };
 }
@@ -93,18 +105,19 @@ beforeEach(() => {
   useHudStore.setState({
     visible: false,
     screenshots: [],
-    instructions: '',
     error: null,
     answer: '',
     streaming: false,
     recording: false,
     transcribing: false,
     transcript: '',
+    codeText: '',
+    lastRun: null,
   });
 });
 
 describe('registerHotkeys', () => {
-  it('registers the toggle, capture, send, and record accelerators', async () => {
+  it('registers the toggle, capture, send, record, and paste-code accelerators', async () => {
     const hotkey = new FakeHotkeyPort();
     const overlay = createFakeOverlay();
 
@@ -115,7 +128,79 @@ describe('registerHotkeys', () => {
       CAPTURE_ACCELERATOR,
       SEND_ACCELERATOR,
       RECORD_ACCELERATOR,
+      PASTE_CODE_ACCELERATOR,
     ]);
+  });
+
+  it('paste-code hotkey stages the clipboard text as code and shows the HUD (R15)', async () => {
+    const hotkey = new FakeHotkeyPort();
+    const overlay = createFakeOverlay();
+    const clipboard = createFakeClipboard('func main() {}\n');
+    await registerHotkeys(
+      createContainer(hotkey, overlay, undefined, undefined, undefined, clipboard),
+    );
+
+    hotkey.press(PASTE_CODE_ACCELERATOR);
+    await flush();
+
+    expect(useHudStore.getState().codeText).toBe('func main() {}\n');
+    expect(overlay.show).toHaveBeenCalled();
+  });
+
+  it('paste-code hotkey with an empty clipboard reports it instead of staging nothing', async () => {
+    const hotkey = new FakeHotkeyPort();
+    const overlay = createFakeOverlay();
+    await registerHotkeys(
+      createContainer(hotkey, overlay, undefined, undefined, undefined, createFakeClipboard('  ')),
+    );
+
+    hotkey.press(PASTE_CODE_ACCELERATOR);
+    await flush();
+
+    expect(useHudStore.getState().codeText).toBe('');
+    expect(useHudStore.getState().error).toContain('Буфер обмена не содержит текста');
+  });
+
+  it('paste-code with an empty clipboard does not stop a recording in progress', async () => {
+    // Regression (review): the feedback must not go through `fail`, which
+    // would flip `recording` off while the native recorder keeps running.
+    const hotkey = new FakeHotkeyPort();
+    await registerHotkeys(
+      createContainer(hotkey, createFakeOverlay(), undefined, undefined, undefined, createFakeClipboard('')),
+    );
+    useHudStore.setState({ recording: true, streaming: true });
+
+    hotkey.press(PASTE_CODE_ACCELERATOR);
+    await flush();
+
+    expect(useHudStore.getState().recording).toBe(true);
+    expect(useHudStore.getState().streaming).toBe(true);
+    expect(useHudStore.getState().error).toContain('Буфер обмена');
+  });
+
+  it('send with staged code and no screenshots runs a text-only request and consumes the code', async () => {
+    const hotkey = new FakeHotkeyPort();
+    const overlay = createFakeOverlay();
+    const screenCapture = new FakeScreenCaptureAdapter();
+    const captureSpy = vi.spyOn(screenCapture, 'capture');
+    const llm = new FakeLlmAdapter('text answer');
+    const streamSpy = vi.spyOn(llm, 'stream');
+    await registerHotkeys(
+      createContainer(hotkey, overlay, undefined, createAnalyzeScreenshot(llm, screenCapture)),
+    );
+    useHudStore.setState({ codeText: 'x := 1' });
+
+    hotkey.press(SEND_ACCELERATOR);
+    await flush();
+    await flush();
+
+    expect(captureSpy).not.toHaveBeenCalled();
+    const parts = streamSpy.mock.calls[0]?.[0].messages.find((m) => m.role === 'user')?.parts ?? [];
+    expect(parts.map((p) => p.kind)).toEqual(['text']);
+    expect(useHudStore.getState().answer.trim()).toBe('text answer');
+    expect(useHudStore.getState().codeText).toBe('');
+    // R9/R19: the finish chunk reaches the HUD.
+    expect(useHudStore.getState().lastRun).toMatchObject({ reason: 'stop', fallback: false });
   });
 
   it('record hotkey starts recording, then a second press stops and SENDS (stop = finished question)', async () => {
@@ -209,7 +294,7 @@ describe('registerHotkeys', () => {
     // A transcribe that rejects — the audio context is lost, and the user must
     // be told rather than have it silently swallowed.
     const failingAudio: AudioTranscriptionPort = {
-      startRecording: async () => {},
+      startRecording: async () => ({ maxSeconds: 60 }),
       stopRecording: async () => {},
       transcribe: async () => {
         throw new Error('stt provider down');
@@ -319,7 +404,7 @@ describe('registerHotkeys', () => {
     expect(useHudStore.getState().answer).toContain('fake answer');
   });
 
-  it('send hotkey with nothing staged and an empty input surfaces a clear error and does not analyze', async () => {
+  it('send hotkey with an empty batch surfaces a clear error and does not analyze', async () => {
     const hotkey = new FakeHotkeyPort();
     const overlay = createFakeOverlay();
     const analyzeScreenshot = createAnalyzeScreenshot();
@@ -329,30 +414,10 @@ describe('registerHotkeys', () => {
     hotkey.press(SEND_ACCELERATOR);
     await flush();
 
-    expect(useHudStore.getState().error).toContain('Нечего анализировать');
+    expect(useHudStore.getState().error).toContain('Нет данных для анализа');
     expect(analyzeSpy).not.toHaveBeenCalled();
     // The HUD is shown so the user sees the error.
     expect(overlay.show).toHaveBeenCalled();
-  });
-
-  it('send hotkey with typed text but no screenshot analyzes the text alone', async () => {
-    // The input already carries the code/task (pasted, or a question typed by
-    // hand): requiring a screenshot on top of it would block a legitimate send.
-    const hotkey = new FakeHotkeyPort();
-    const overlay = createFakeOverlay();
-    const screenCapture = new FakeScreenCaptureAdapter();
-    const captureSpy = vi.spyOn(screenCapture, 'capture');
-    const analyzeScreenshot = createAnalyzeScreenshot(new FakeLlmAdapter('fake answer'), screenCapture);
-
-    await registerHotkeys(createContainer(hotkey, overlay, undefined, analyzeScreenshot));
-    useHudStore.getState().setInstructions('func main() { println(1) }');
-    hotkey.press(SEND_ACCELERATOR);
-    await flush();
-
-    expect(useHudStore.getState().error).toBeNull();
-    expect(useHudStore.getState().answer).toContain('fake answer');
-    // Text-only: the screen is irrelevant here, so nothing is captured.
-    expect(captureSpy).not.toHaveBeenCalled();
   });
 
   it('never hides the HUD before capturing — content protection keeps it out of the shot', async () => {
@@ -426,17 +491,18 @@ describe('registerHotkeys', () => {
 });
 
 describe('unregisterHotkeys', () => {
-  it('unregisters all four accelerators', async () => {
+  it('unregisters all five accelerators', async () => {
     const hotkey = new FakeHotkeyPort();
     const overlay = createFakeOverlay();
 
-    await unregisterHotkeys({ platform: { hotkey, overlay } });
+    await unregisterHotkeys({ platform: { hotkey, overlay, clipboard: createFakeClipboard() } });
 
     expect(hotkey.unregistered).toEqual([
       TOGGLE_HUD_ACCELERATOR,
       CAPTURE_ACCELERATOR,
       SEND_ACCELERATOR,
       RECORD_ACCELERATOR,
+      PASTE_CODE_ACCELERATOR,
     ]);
   });
 });

@@ -1,0 +1,28 @@
+{
+  "id": "go-http-cache-review",
+  "agent": "reviewer",
+  "language": "all",
+  "source": "source.go",
+  "heldOut": false,
+  "notes": "Go HTTP service with a map cache. Ground truth = the 13 findings of Claude Sonnet 5 in plain chat (baseline 2026-08-27, origin 'sonnet5-chat') + 5 real defects nobody reported, found while re-analysing the baseline (origin 'review-2026-09'). The first 13 keep ids G1..G13 so old numbers stay comparable (recall13).",
+  "findings": [
+    { "id": "G1", "severity": "critical", "origin": "sonnet5-chat", "lines": [39, 41], "title": "Unsynchronized map write in a goroutine", "detail": "`go func(){ cache[id] = name }()` writes the shared map without cacheMu; concurrent writes crash the whole process with `fatal error: concurrent map writes` (not recoverable). The goroutine is also pointless." },
+    { "id": "G2", "severity": "critical", "origin": "sonnet5-chat", "lines": [68, 70], "title": "RLock used for a map write", "detail": "`cacheMu.RLock(); cache[id] = name` — a read lock admits several writers at once, so concurrent requests write the map in parallel. Must be Lock()." },
+    { "id": "G3", "severity": "critical", "origin": "sonnet5-chat", "lines": [27, 28], "title": "nil resp after an ignored Do error", "detail": "`resp, _ := httpCli.Do(req)` — on a network error resp is nil and `defer resp.Body.Close()` panics with a nil pointer dereference." },
+    { "id": "G4", "severity": "critical", "origin": "sonnet5-chat", "lines": [26, 44], "title": "All errors swallowed; FetchUser always returns nil error", "detail": "NewRequest/Do/ReadAll/Unmarshal errors are discarded, so FetchUser's error return is a lie: failures become an empty name that gets cached and served." },
+    { "id": "G5", "severity": "high", "origin": "sonnet5-chat", "lines": [47, 47], "title": "Data race on the requests counter", "detail": "`requests++` from concurrent handlers without atomic/mutex loses increments (and the var is unused)." },
+    { "id": "G6", "severity": "high", "origin": "sonnet5-chat", "lines": [64, 66], "title": "panic(err) in an HTTP handler", "detail": "A fetch failure panics instead of returning an HTTP error: the client gets an aborted connection, logs get a stack trace, no control over the response." },
+    { "id": "G7", "severity": "high", "origin": "sonnet5-chat", "lines": [50, 53], "title": "500 for a missing parameter", "detail": "Missing `id` is a client error → 400 Bad Request, not 500." },
+    { "id": "G8", "severity": "medium", "origin": "sonnet5-chat", "lines": [27, 33], "title": "Upstream status code not checked", "detail": "A 404/500 from the upstream API is parsed as a User with empty fields and an empty name is cached as a valid answer." },
+    { "id": "G9", "severity": "medium", "origin": "sonnet5-chat", "lines": [35, 37], "title": "Byte-based truncation breaks UTF-8", "detail": "`name[:10]` slices bytes; a multibyte name (Cyrillic, emoji) is cut mid-rune into an invalid string. Truncate by runes." },
+    { "id": "G10", "severity": "medium", "origin": "sonnet5-chat", "lines": [14, 14], "title": "HTTP client without a timeout", "detail": "`&http.Client{}` has no Timeout: a hanging upstream blocks the handler goroutine forever." },
+    { "id": "G11", "severity": "medium", "origin": "sonnet5-chat", "lines": [78, 78], "title": "Server without read/write timeouts", "detail": "`http.ListenAndServe` with no ReadHeaderTimeout/ReadTimeout/WriteTimeout is open to slowloris / slow clients." },
+    { "id": "G12", "severity": "medium", "origin": "sonnet5-chat", "lines": [15, 15], "title": "Unbounded cache", "detail": "The map cache has no size limit or TTL — memory grows with every unique id." },
+    { "id": "G13", "severity": "low", "origin": "sonnet5-chat", "lines": [30, 30], "title": "Deprecated ioutil", "detail": "`ioutil.ReadAll` is deprecated since Go 1.16 → `io.ReadAll`." },
+    { "id": "X1", "severity": "medium", "origin": "review-2026-09", "lines": [26, 26], "title": "User input concatenated into the upstream URL", "detail": "`baseURL+\"/users/\"+id` without escaping: `id` like `../admin` or `1?x=` rewrites the upstream path/query. Use url.PathEscape / url.JoinPath." },
+    { "id": "X2", "severity": "medium", "origin": "review-2026-09", "lines": [78, 78], "title": "ListenAndServe error ignored", "detail": "If the port is taken, ListenAndServe returns an error that is dropped and main exits right after logging 'starting'. Wrap in log.Fatal." },
+    { "id": "X3", "severity": "medium", "origin": "review-2026-09", "lines": [26, 26], "title": "Outgoing request not bound to the request context", "detail": "http.NewRequest instead of NewRequestWithContext(r.Context(), …): a disconnected client does not cancel the upstream call." },
+    { "id": "X4", "severity": "medium", "origin": "review-2026-09", "lines": [30, 30], "title": "Unbounded response body read", "detail": "ReadAll without io.LimitReader: a huge upstream response is read fully into memory." },
+    { "id": "X5", "severity": "low", "origin": "review-2026-09", "lines": [55, 64], "title": "Cache stampede on a miss", "detail": "Concurrent misses for the same id all call FetchUser; singleflight would collapse them into one upstream call." }
+  ]
+}

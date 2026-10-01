@@ -1,10 +1,16 @@
-import { type FormEvent, type KeyboardEvent } from 'react';
+import { type FormEvent } from 'react';
 
 interface PromptInputProps {
   readonly value: string;
   readonly disabled?: boolean;
   readonly onChange: (value: string) => void;
   readonly onSubmit: () => void;
+  /**
+   * Follow-up on the current answer (P1 item 9). The button shows only when a
+   * thread exists; the typed text is then the follow-up question.
+   */
+  readonly onFollowUp?: () => void;
+  readonly canFollowUp?: boolean;
 }
 
 /**
@@ -12,38 +18,34 @@ interface PromptInputProps {
  * be readable by the hotkey flow at capture time), so it takes `value`/`onChange`
  * and just emits `onSubmit` — no local state, no logic inside.
  *
- * A textarea, not a single-line input: the box carries not only short hints but
- * also whole code snippets pasted straight in (a send needs no screenshot when
- * this text is non-empty — see `runSend`), and a single-line input silently
- * flattens a multi-line paste into one line, wrecking the very code under
- * review. Enter still submits (the fast HUD ergonomics); Shift+Enter inserts a
- * newline for hand-typed multi-line input.
+ * The text is optional short hints (e.g. a framework or constraint) sent
+ * alongside the screenshot; submitting re-runs the analysis on the pinned shot.
  */
-export function PromptInput({ value, disabled = false, onChange, onSubmit }: PromptInputProps) {
+export function PromptInput({
+  value,
+  disabled = false,
+  onChange,
+  onSubmit,
+  onFollowUp,
+  canFollowUp = false,
+}: PromptInputProps) {
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (disabled) return;
     onSubmit();
   };
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key !== 'Enter' || e.shiftKey) return;
-    e.preventDefault();
-    if (disabled) return;
-    onSubmit();
-  };
-
   return (
-    <form onSubmit={handleSubmit} className="flex items-end gap-2">
-      <textarea
-        // `rows={2}` + a max height keeps the HUD compact while long pastes stay
-        // scrollable instead of pushing the answer off-screen.
-        rows={2}
-        className="max-h-32 flex-1 resize-y rounded-md bg-neutral-800 px-3 py-2 font-mono text-sm text-neutral-100 outline-none placeholder:font-sans placeholder:text-neutral-500"
-        placeholder="Hints, or paste the code / task here (Shift+Enter — new line)…"
+    <form onSubmit={handleSubmit} className="flex gap-2">
+      <input
+        className="flex-1 rounded-md bg-neutral-800 px-3 py-2 text-sm text-neutral-100 outline-none placeholder:text-neutral-500"
+        placeholder={
+          canFollowUp
+            ? 'Подсказка к новому анализу или вопрос-уточнение…'
+            : 'Optional hints (framework, constraints)…'
+        }
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        onKeyDown={handleKeyDown}
         disabled={disabled}
       />
       <button
@@ -53,6 +55,17 @@ export function PromptInput({ value, disabled = false, onChange, onSubmit }: Pro
       >
         Run
       </button>
+      {canFollowUp && onFollowUp && (
+        <button
+          type="button"
+          onClick={onFollowUp}
+          disabled={disabled || !value.trim()}
+          title="Задать уточняющий вопрос к текущему ответу"
+          className="rounded-md border border-indigo-600 px-3 py-2 text-sm font-medium text-indigo-300 disabled:opacity-50"
+        >
+          ↳ Уточнить
+        </button>
+      )}
     </form>
   );
 }

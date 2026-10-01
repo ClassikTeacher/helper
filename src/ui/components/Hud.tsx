@@ -2,13 +2,18 @@ import { useState } from 'react';
 import { useHudStore, MAX_SCREENSHOTS } from '@/ui/store/hud.store';
 import { useAnalyzeScreenshot } from '@/ui/hooks/useAnalyzeScreenshot';
 import { useToggleRecording } from '@/ui/hooks/useToggleRecording';
+import { useStopRun } from '@/ui/hooks/useStopRun';
+import { useFollowUp } from '@/ui/hooks/useFollowUp';
+import { useElapsedSeconds } from '@/ui/hooks/useElapsedSeconds';
 import { useApiKeySettings } from '@/ui/hooks/useApiKeySettings';
 import { AGENT_LIST, resolveAgent } from '@/core/domain/agents-catalog';
 import { AgentSwitch } from './AgentSwitch';
 import { AudioControls } from './AudioControls';
+import { CodeTextInput } from './CodeTextInput';
 import { LanguageSelect } from './LanguageSelect';
 import { MessageList } from './MessageList';
 import { PromptInput } from './PromptInput';
+import { RunInfoLine } from './RunInfoLine';
 import { ScreenshotStrip } from './ScreenshotStrip';
 import { SettingsPanel } from './SettingsPanel';
 
@@ -29,7 +34,15 @@ export function Hud() {
   const recording = useHudStore((s) => s.recording);
   const transcribing = useHudStore((s) => s.transcribing);
   const transcript = useHudStore((s) => s.transcript);
-  const usage = useHudStore((s) => s.usage);
+  const codeText = useHudStore((s) => s.codeText);
+  const lastRun = useHudStore((s) => s.lastRun);
+  const stopped = useHudStore((s) => s.stopped);
+  const hasThread = useHudStore((s) => s.thread !== null);
+  const phase = useHudStore((s) => s.phase);
+  const recordingStartedAt = useHudStore((s) => s.recordingStartedAt);
+  const recordingWindowSecs = useHudStore((s) => s.recordingWindowSecs);
+  const recordingElapsed = useElapsedSeconds(recordingStartedAt);
+  const setCodeText = useHudStore((s) => s.setCodeText);
   const setAgentId = useHudStore((s) => s.setAgentId);
   const setLanguage = useHudStore((s) => s.setLanguage);
   const setInstructions = useHudStore((s) => s.setInstructions);
@@ -37,6 +50,8 @@ export function Hud() {
   const clearScreenshots = useHudStore((s) => s.clearScreenshots);
   const analyze = useAnalyzeScreenshot();
   const toggleRecording = useToggleRecording();
+  const stop = useStopRun(streaming);
+  const followUp = useFollowUp();
   const apiKey = useApiKeySettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -72,7 +87,22 @@ export function Hud() {
           AI-Helper
         </span>
         <div className="flex items-center gap-3">
-          {streaming && <span className="text-xs text-indigo-400">streaming…</span>}
+          {streaming && (
+            <span className="text-xs text-indigo-400">
+              {phase === 'reading-screen' ? 'распознаю код…' : 'streaming…'}
+            </span>
+          )}
+          {streaming && (
+            <button
+              type="button"
+              onClick={stop}
+              aria-label="Остановить ответ"
+              title="Остановить (Esc)"
+              className="rounded border border-neutral-600 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-800"
+            >
+              ■ Стоп
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setSettingsOpen((open) => !open)}
@@ -110,37 +140,34 @@ export function Hud() {
         onRemove={removeScreenshot}
         onClear={clearScreenshots}
       />
+      <CodeTextInput value={codeText} disabled={streaming} onChange={setCodeText} />
       <AudioControls
         recording={recording}
         transcribing={transcribing}
         transcript={transcript}
         onToggle={toggleRecording}
         disabled={streaming || transcribing}
+        elapsedSecs={recordingElapsed}
+        windowSecs={recordingWindowSecs}
       />
-      {/* Shows the text that fed the current answer — a short hint, or the whole
-          pasted snippet on a screenshot-free send, hence the height cap +
-          scroll: a long paste must not push the answer off the HUD. */}
+      {/* Shows that the current answer used an extra hint, not just the screenshot. */}
       {activeHint && (
         <div className="mb-3 flex items-start gap-2 rounded-md border border-indigo-700/50 bg-indigo-950/40 px-3 py-2 text-xs text-indigo-200">
           <span className="font-semibold uppercase tracking-wide text-indigo-400">Hint</span>
-          <span className="max-h-20 overflow-y-auto whitespace-pre-wrap break-words">{activeHint}</span>
+          <span className="break-words">{activeHint}</span>
         </div>
       )}
       <div className="mb-3 max-h-[320px] overflow-y-auto">
-        <MessageList answer={answer} streaming={streaming} error={error} />
+        <MessageList answer={answer} streaming={streaming} error={error} stopped={stopped} />
+        <RunInfoLine info={lastRun} />
       </div>
-      {/* Token/cost accounting of the finished answer (R9 observability). */}
-      {usage && !streaming && (
-        <div className="mb-3 text-right text-[10px] text-neutral-500">
-          {usage.inputTokens}&rarr;{usage.outputTokens} tok
-          {usage.cost != null && ` · $${usage.cost.toFixed(4)}`}
-        </div>
-      )}
       <PromptInput
         value={instructions}
         disabled={streaming}
         onChange={setInstructions}
         onSubmit={analyze}
+        onFollowUp={followUp}
+        canFollowUp={hasThread}
       />
     </div>
   );

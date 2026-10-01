@@ -1,14 +1,3 @@
-// Eval case `go-http-cache-review` (reviewer agent).
-//
-// This is the GROUND TRUTH text of the case. Screenshot it (any editor, dark or
-// light theme, the whole file in one frame) into `shot-1.png` and feed that to
-// the HUD — the file is kept alongside so `expected.md` can quote exact lines
-// and so an OCR misread in a run is provably a misread.
-//
-// The snippet is deliberately dense: 13 independent defects across correctness,
-// concurrency, error handling, resource limits and idiom (see expected.md).
-// Do NOT "fix" it.
-
 package main
 
 import (

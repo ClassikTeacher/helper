@@ -8,9 +8,17 @@
  * keep the audio and the API key in the Rust core — neither ever enters the
  * renderer, only the resulting transcript string does.
  */
+/** What a started recording keeps: a rolling window of the last `maxSeconds`. */
+export interface RecordingInfo {
+  readonly maxSeconds: number;
+}
+
 export interface AudioTranscriptionPort {
-  /** Begin capturing loopback audio, discarding anything previously buffered. */
-  startRecording(): Promise<void>;
+  /**
+   * Begin capturing loopback audio, discarding anything previously buffered.
+   * A longer recording keeps rolling — only the LAST `maxSeconds` are sent.
+   */
+  startRecording(): Promise<RecordingInfo>;
   /** Stop capturing. Buffered audio is retained until `transcribe`. */
   stopRecording(): Promise<void>;
   /**

@@ -14,6 +14,12 @@ export const IPC_COMMANDS = {
    * enters the renderer. See architecture.md §3, §6.
    */
   llmStream: 'llm_stream',
+  /**
+   * Stops an in-flight `llm_stream` by its `requestId` (Stop button / a
+   * superseding send). Payload `LlmCancelRequestDto`. Race-safe: a cancel that
+   * arrives before the stream registers is remembered natively.
+   */
+  llmCancel: 'llm_cancel',
   secretGet: 'secret_get',
   secretSet: 'secret_set',
   /**

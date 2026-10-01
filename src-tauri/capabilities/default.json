@@ -13,6 +13,7 @@
     "global-shortcut:allow-is-registered",
     "sql:default",
     "sql:allow-execute",
-    "store:default"
+    "store:default",
+    "clipboard-manager:allow-read-text"
   ]
 }

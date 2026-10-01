@@ -1,9 +1,20 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { buildModelChains } from '@/bootstrap/model-chain';
+import {
+  buildModelChain,
+  buildModelRoutes,
+  parseImageEdge,
+  parseReasoning,
+  parseTemperature,
+} from '@/bootstrap/model-chain';
 import { dedupeModels } from '@/core/application/services/resilient-llm';
-import { DEFAULT_MODEL, DEFAULT_FALLBACKS } from '@/core/domain/model-route';
+import {
+  DEFAULT_MODEL,
+  DEFAULT_FALLBACKS,
+  DEFAULT_MAX_IMAGE_EDGE,
+  DEFAULT_TEMPERATURE,
+} from '@/core/domain/model-route';
 
-describe('buildModelChains', () => {
+describe('buildModelChain', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -12,76 +23,110 @@ describe('buildModelChains', () => {
     vi.stubEnv('VITE_DEFAULT_MODEL', 'vendor/primary');
     vi.stubEnv('VITE_MODEL_FALLBACKS', 'vendor/b,vendor/c');
 
-    expect(buildModelChains().light).toEqual(['vendor/primary', 'vendor/b', 'vendor/c']);
+    expect(buildModelChain()).toEqual(['vendor/primary', 'vendor/b', 'vendor/c']);
   });
 
   it('trims each entry and drops blanks in the fallback list', () => {
     vi.stubEnv('VITE_DEFAULT_MODEL', '  vendor/primary  ');
     vi.stubEnv('VITE_MODEL_FALLBACKS', '  vendor/b ,, , vendor/c ,');
 
-    expect(buildModelChains().light).toEqual(['vendor/primary', 'vendor/b', 'vendor/c']);
+    expect(buildModelChain()).toEqual(['vendor/primary', 'vendor/b', 'vendor/c']);
   });
 
   it('de-duplicates a primary that is repeated in the fallback list', () => {
     vi.stubEnv('VITE_DEFAULT_MODEL', 'vendor/a');
     vi.stubEnv('VITE_MODEL_FALLBACKS', 'vendor/a,vendor/b,vendor/a');
 
-    expect(buildModelChains().light).toEqual(['vendor/a', 'vendor/b']);
+    expect(buildModelChain()).toEqual(['vendor/a', 'vendor/b']);
   });
 
   it('falls back to the compiled-in defaults when both vars are blank', () => {
     vi.stubEnv('VITE_DEFAULT_MODEL', '');
     vi.stubEnv('VITE_MODEL_FALLBACKS', '');
 
-    expect(buildModelChains().light).toEqual(dedupeModels([DEFAULT_MODEL, ...DEFAULT_FALLBACKS]));
+    expect(buildModelChain()).toEqual(dedupeModels([DEFAULT_MODEL, ...DEFAULT_FALLBACKS]));
   });
 
   it('uses the default fallback list when only the primary is overridden', () => {
     vi.stubEnv('VITE_DEFAULT_MODEL', 'vendor/primary');
     vi.stubEnv('VITE_MODEL_FALLBACKS', '');
 
-    expect(buildModelChains().light).toEqual(
-      dedupeModels(['vendor/primary', ...DEFAULT_FALLBACKS]),
-    );
+    expect(buildModelChain()).toEqual(dedupeModels(['vendor/primary', ...DEFAULT_FALLBACKS]));
+  });
+});
+
+describe('buildModelRoutes (R11/R16)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
-  // The per-route seam (agents-improvement.md R11). The property that matters
-  // for "nothing changed yet" is the first test below: without per-route vars,
-  // both routes are the same chain.
-  it('gives both routes the SAME chain when no per-route var is set', () => {
-    vi.stubEnv('VITE_DEFAULT_MODEL', 'vendor/primary');
-    vi.stubEnv('VITE_MODEL_FALLBACKS', 'vendor/b');
-
-    const chains = buildModelChains();
-
-    expect(chains.heavy).toEqual(chains.light);
-    expect(chains.heavy).toEqual(['vendor/primary', 'vendor/b']);
-  });
-
-  it('overrides only the named route, leaving the other on the base chain', () => {
-    vi.stubEnv('VITE_DEFAULT_MODEL', 'vendor/light-primary');
-    vi.stubEnv('VITE_MODEL_FALLBACKS', 'vendor/shared-fallback');
-    vi.stubEnv('VITE_HEAVY_MODEL', 'vendor/heavy-primary');
-
-    const chains = buildModelChains();
-
-    // Heavy takes its own primary but inherits the base fallback list.
-    expect(chains.heavy).toEqual(['vendor/heavy-primary', 'vendor/shared-fallback']);
-    expect(chains.light).toEqual(['vendor/light-primary', 'vendor/shared-fallback']);
-  });
-
-  it('lets a route override its fallback list independently of its primary', () => {
+  it('gives both routes the SAME chain and parameters when no per-route var is set', () => {
     vi.stubEnv('VITE_DEFAULT_MODEL', 'vendor/base');
-    vi.stubEnv('VITE_MODEL_FALLBACKS', 'vendor/base-fallback');
-    vi.stubEnv('VITE_HEAVY_MODEL_FALLBACKS', 'vendor/heavy-fallback-1, vendor/heavy-fallback-2');
+    vi.stubEnv('VITE_MODEL_FALLBACKS', 'vendor/fb');
 
-    const chains = buildModelChains();
+    const routes = buildModelRoutes();
 
-    expect(chains.heavy).toEqual([
-      'vendor/base',
-      'vendor/heavy-fallback-1',
-      'vendor/heavy-fallback-2',
-    ]);
-    expect(chains.light).toEqual(['vendor/base', 'vendor/base-fallback']);
+    expect(routes.light).toEqual(routes.heavy);
+    expect(routes.light).toEqual({
+      chain: ['vendor/base', 'vendor/fb'],
+      temperature: DEFAULT_TEMPERATURE,
+      maxImageEdge: DEFAULT_MAX_IMAGE_EDGE,
+    });
+  });
+
+  it('applies per-route overrides only to their route', () => {
+    vi.stubEnv('VITE_DEFAULT_MODEL', 'vendor/base');
+    vi.stubEnv('VITE_MODEL_FALLBACKS', 'vendor/fb');
+    vi.stubEnv('VITE_HEAVY_MODEL', 'anthropic/claude-sonnet-5');
+    vi.stubEnv('VITE_HEAVY_MODEL_FALLBACKS', 'vendor/strong');
+    vi.stubEnv('VITE_HEAVY_TEMPERATURE', 'off');
+    vi.stubEnv('VITE_HEAVY_REASONING', 'medium');
+    vi.stubEnv('VITE_HEAVY_MAX_IMAGE_EDGE', '2576');
+
+    const routes = buildModelRoutes();
+
+    expect(routes.heavy).toEqual({
+      chain: ['anthropic/claude-sonnet-5', 'vendor/strong'],
+      reasoningEffort: 'medium',
+      maxImageEdge: 2576,
+    });
+    expect(routes.light.chain).toEqual(['vendor/base', 'vendor/fb']);
+  });
+
+  it('keeps the WHOLE base chain as fallbacks when only a route primary is overridden', () => {
+    // Regression (review): the base primary — even when also listed as a
+    // fallback — must stay in the chain, or an outage of the route primary
+    // falls straight through to the weakest model.
+    vi.stubEnv('VITE_DEFAULT_MODEL', 'vendor/base');
+    vi.stubEnv('VITE_MODEL_FALLBACKS', 'vendor/base,vendor/fb');
+    vi.stubEnv('VITE_HEAVY_MODEL', 'vendor/deep');
+
+    expect(buildModelRoutes().heavy.chain).toEqual(['vendor/deep', 'vendor/base', 'vendor/fb']);
+  });
+});
+
+describe('route env parsers', () => {
+  it('parseTemperature: default, off, valid number, invalid → default', () => {
+    expect(parseTemperature(undefined)).toBe(DEFAULT_TEMPERATURE);
+    expect(parseTemperature('off')).toBeUndefined();
+    expect(parseTemperature('0')).toBe(0);
+    expect(parseTemperature('0.7')).toBe(0.7);
+    expect(parseTemperature('hot')).toBe(DEFAULT_TEMPERATURE);
+    expect(parseTemperature('5')).toBe(DEFAULT_TEMPERATURE);
+  });
+
+  it('parseReasoning: only low|medium|high, case-insensitive', () => {
+    expect(parseReasoning('Medium')).toBe('medium');
+    expect(parseReasoning('off')).toBeUndefined();
+    expect(parseReasoning('max')).toBeUndefined();
+    expect(parseReasoning(undefined)).toBeUndefined();
+  });
+
+  it('parseImageEdge: default on blank/invalid, clamps to [512, 2576]', () => {
+    expect(parseImageEdge(undefined)).toBe(DEFAULT_MAX_IMAGE_EDGE);
+    expect(parseImageEdge('abc')).toBe(DEFAULT_MAX_IMAGE_EDGE);
+    expect(parseImageEdge('100')).toBe(512);
+    expect(parseImageEdge('4000')).toBe(2576);
+    expect(parseImageEdge('2000.4')).toBe(2000);
   });
 });

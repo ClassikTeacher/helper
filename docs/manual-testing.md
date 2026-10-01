@@ -37,9 +37,7 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 - [ ] Pressing CAPTURE 1–5 times stacks thumbnails in the strip with a "N/5" counter; a 6th press does not add a 6th (cap); individual "✕" removes a shot, "Очистить всё" clears the batch
 - [ ] Pressing the SEND hotkey (`Ctrl+Alt+Enter` by default; override via `VITE_SEND_ACCELERATOR`) — or clicking Run — analyzes the whole staged batch at once and **streams an analysis** (main scenario, plan.md §4); the now-visible HUD itself never shows up in the analyzed images (content-protected)
 - [ ] Tokens stream progressively into the HUD (not all at once)
-- [ ] Pressing SEND / Run with an empty batch AND an empty input shows "Нечего анализировать — сделайте скриншот (хоткей захвата) или введите текст задачи в поле ввода." instead of silently capturing
-- [ ] **Text-only send:** paste a multi-line code snippet into the input with NO screenshot staged and press Run — it analyzes the pasted text (no screenshot required), the paste keeps its line breaks, and no screen capture happens; verify for both Solve and Review
-- [ ] In the input, Enter submits and Shift+Enter inserts a newline
+- [ ] Pressing SEND / Run with an empty batch (and no code text) shows "Нет данных для анализа — сделайте хотя бы один скриншот (хоткей захвата) или вставьте код текстом." instead of silently capturing
 - [ ] Works for BOTH agents: repeat capture→send with Solve and with Review selected in the HUD
 - [ ] Missing/invalid API key surfaces a readable error in the HUD (no silent failure)
 - [ ] If an error arrives mid-stream (e.g. kill network), any partial answer already streamed stays visible alongside the error ("Interrupted: …"), not replaced by it
@@ -48,6 +46,26 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 
 ### Phase 3 — Model routing
 - [ ] A "vision" task and a "quick-answer" task hit different models (verify via OpenRouter dashboard/logs)
+
+### Agent improvements (R9–R19, 2026-09)
+- [ ] **Code as text (R15):** select code in the editor, `Ctrl+C`, press `Ctrl+Alt+X` (override `VITE_PASTE_CODE_ACCELERATOR`) — the HUD shows "Код: N строк"; SEND answers from the text (reviewer cites `стр. N` matching the editor lines)
+- [ ] `Ctrl+Alt+X` with an image on the clipboard shows "Буфер обмена не содержит текста…" and does NOT stop a running recording/answer
+- [ ] "{ } Код текстом" toggle: paste code by hand, Run with no screenshots → a text-only answer (no capture happens); the field is cleared after a successful run, kept after a failed one
+- [ ] **Run info (R9/R19):** under the answer a small line shows the model, `in→out tok` and `$cost`; with the primary model made unavailable (e.g. a bogus `VITE_LIGHT_MODEL`) the line turns amber "резервная модель · …"
+- [ ] **Routes (R11/R16):** with `VITE_HEAVY_MODEL`/`VITE_HEAVY_REASONING=medium` set, a Review request reaches that model (OpenRouter activity log) and a Solve request does not; one live request confirms the provider accepts the parameters (no HTTP 400)
+- [ ] **Image cap (R4/R17):** with the default 1568 edge, the request in the OpenRouter log carries a ~1568×882 image for a 2560×1440 capture; with `VITE_HEAVY_MAX_IMAGE_EDGE=2576` a Review request carries the full 2560×1440
+- [ ] **Reviewer format (R14/R18):** findings look like `<Severity> — «quote» (стр. N): … Последствие: … Исправление: …`; Low items are a single "Также (Low): …" line; `стр. N` appears only when the gutter/numbered text shows it
+
+### P0/P1 quality fixes (2026-09)
+- [ ] **One active run:** press SEND twice quickly (or Run while an answer streams) — the second answer replaces the first; the two never interleave in the HUD
+- [ ] **Stop:** while an answer streams, "■ Стоп" (or Esc with the HUD focused) stops it; the partial answer stays with "Остановлено."; the OpenRouter activity log shows the generation stopped (not completed)
+- [ ] **Recording window:** record > 60 s (`AI_HELPER_MAX_RECORDING_SECS` to shorten) — the HUD clock keeps running and shows "в запрос уйдут последние N с"; the transcript contains the END of the speech, not the beginning
+- [ ] **Multi-monitor:** with the mouse on the second monitor, the capture hotkey captures THAT monitor
+- [ ] **STT vocabulary:** say "горутина", "мьютекс", "Kafka", "JOIN" — they come out spelled as terms; `AI_HELPER_STT_PROMPT=off` / `AI_HELPER_STT_LANGUAGE=auto` still transcribe
+- [ ] **Follow-up:** after an answer, type "а без доп. памяти?" and press "↳ Уточнить" — the answer addresses the same task; a new analysis (SEND) starts a new thread
+- [ ] **Screen transcription:** with `VITE_AUTO_TRANSCRIBE=reviewer`, a Review shows "распознаю код…" first; with a bogus `VITE_TRANSCRIBE_MODEL` the review still arrives (screenshots only)
+- [ ] **Code blocks:** answers show highlighted code with a "копировать" button; pasting after it gives the exact code
+- [ ] `pnpm models:check` passes for the configured chains
 
 ### Phase 4 — Context
 - [ ] History persists across app restarts

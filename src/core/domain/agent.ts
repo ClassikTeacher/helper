@@ -18,18 +18,15 @@ export interface Agent {
   /** Base system prompt describing the agent's job. */
   readonly systemPrompt: string;
   /**
-   * Which class of model serves this agent (see `ModelRoute`). The agent names
-   * a WEIGHT, never a concrete model — the slug behind each route is env-driven
-   * (`bootstrap/model-chain.ts`), so making review run on a stronger model is a
-   * config change, not a code change. Today both routes resolve to the same
-   * chain, so this changes nothing at runtime yet.
-   */
-  readonly modelRoute: ModelRoute;
-  /**
    * Whether the UI offers a programming-language selector for this agent.
    * The solver needs it — a bare text task may not state a language. The
    * reviewer does not — the language is evident from the code's syntax, and
    * forcing a guess would only add room for error (user's requirement).
    */
   readonly requiresLanguage: boolean;
+  /**
+   * Task weight (R11) — the agent declares the route it needs, never a model
+   * slug. `ResilientLlm` resolves the route to a model chain + request profile.
+   */
+  readonly modelRoute: ModelRoute;
 }

@@ -20,6 +20,8 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 tauri-plugin-store = "2"
+# R15: read clipboard text for the paste-code hotkey (`<code_text>` channel).
+tauri-plugin-clipboard-manager = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
@@ -44,6 +46,9 @@ keyring = { version = "3", features = ["windows-native"] }
 # transcription call uploads the recorded WAV as multipart/form-data.
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "multipart"] }
 futures-util = "0.3"
+# LLM request cancellation (llm_cancel): `sync::Notify` wakes the streaming
+# future. Already in the tree via tauri — no new crate.
+tokio = { version = "1", features = ["sync"] }
 
 # wasapi (phase 9): WASAPI loopback capture of the OUTPUT device (interlocutor's
 # voice) for cloud STT. cpal was the original plan but has NO Windows loopback
@@ -54,7 +59,7 @@ futures-util = "0.3"
 wasapi = "0.23"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 
 [[example]]
 name = "spike_scap"

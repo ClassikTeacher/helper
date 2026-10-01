@@ -21,6 +21,9 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "verbatimModuleSyntax": true,
+    // No ambient @types auto-inclusion: @types/node exists for the eval harness
+    // (eval/tsconfig.json) and must not leak Node globals into browser code.
+    "types": [],
 
     "baseUrl": ".",
     "paths": {

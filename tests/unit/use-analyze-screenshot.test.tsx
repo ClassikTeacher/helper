@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAnalyzeScreenshot } from '@/ui/hooks/useAnalyzeScreenshot';
 import { ServicesProvider } from '@/bootstrap/ServicesProvider';
@@ -26,11 +26,12 @@ beforeEach(() => {
     error: null,
     instructions: '',
     activeHint: '',
+    codeText: '',
   });
 });
 
 describe('useAnalyzeScreenshot', () => {
-  it('fails clearly instead of silently capturing when there is neither a screenshot nor input text', async () => {
+  it('fails clearly instead of silently capturing when no screenshot is pinned yet', async () => {
     // Capturing here (rather than reusing a pinned shot) would risk framing
     // the now-visible HUD itself, since nothing hides it for this path.
     const container = createContainer({
@@ -44,42 +45,8 @@ describe('useAnalyzeScreenshot', () => {
     });
 
     expect(useHudStore.getState().error).toBe(
-      'Нечего анализировать — сделайте скриншот (хоткей захвата) или введите текст задачи в поле ввода.',
+      'Нет данных для анализа — сделайте хотя бы один скриншот (хоткей захвата) или вставьте код текстом.',
     );
-    expect(useHudStore.getState().answer).toBe('');
-  });
-
-  it('runs on input text alone — a screenshot is not required when code is pasted in', async () => {
-    // The Run button must work for a paste-only send (the reviewer's main
-    // text path); demanding a screenshot on top of pasted code blocked it.
-    const screenCapture = new FakeScreenCaptureAdapter();
-    const captureSpy = vi.spyOn(screenCapture, 'capture');
-    const container = createContainer({ llm: new FakeLlmAdapter('review result'), screenCapture });
-    useHudStore.getState().setInstructions('func Handle() error { return nil }');
-    const { result } = renderHook(() => useAnalyzeScreenshot(), { wrapper: wrapperWithContainer(container) });
-
-    await act(async () => {
-      await result.current();
-    });
-
-    expect(useHudStore.getState().error).toBeNull();
-    expect(useHudStore.getState().answer).toContain('review result');
-    expect(captureSpy).not.toHaveBeenCalled();
-  });
-
-  it('ignores whitespace-only input — blanks are not a task', async () => {
-    const container = createContainer({
-      llm: new FakeLlmAdapter('should not be reached'),
-      screenCapture: new FakeScreenCaptureAdapter(),
-    });
-    useHudStore.getState().setInstructions('   \n  ');
-    const { result } = renderHook(() => useAnalyzeScreenshot(), { wrapper: wrapperWithContainer(container) });
-
-    await act(async () => {
-      await result.current();
-    });
-
-    expect(useHudStore.getState().error).toContain('Нечего анализировать');
     expect(useHudStore.getState().answer).toBe('');
   });
 
@@ -162,5 +129,49 @@ describe('useAnalyzeScreenshot', () => {
     expect(useHudStore.getState().error).toBe('provider down');
     expect(useHudStore.getState().instructions).toBe('  use React  ');
     expect(useHudStore.getState().activeHint).toBe('use React');
+  });
+});
+
+describe('code text lifecycle (R15)', () => {
+  it('keeps code staged DURING the run (paste-code hotkey) instead of wiping it on finish', async () => {
+    // Regression (review): only the code this run sent is consumed.
+    let resolveGate!: () => void;
+    const gate = new Promise<void>((r) => {
+      resolveGate = r;
+    });
+    const llm: LlmPort = {
+      async *stream() {
+        await gate;
+        yield { type: 'text-delta', delta: 'ok' };
+        yield { type: 'finish', reason: 'stop' };
+      },
+    };
+    const container = createContainer({ llm, screenCapture: new FakeScreenCaptureAdapter() });
+    useHudStore.setState({ codeText: 'first', screenshots: [], recording: false });
+    const { result } = renderHook(() => useAnalyzeScreenshot(), { wrapper: wrapperWithContainer(container) });
+
+    let run!: Promise<void>;
+    act(() => {
+      run = result.current();
+    });
+    useHudStore.getState().setCodeText('second — staged mid-run');
+    resolveGate();
+    await act(async () => {
+      await run;
+    });
+
+    expect(useHudStore.getState().codeText).toBe('second — staged mid-run');
+  });
+
+  it('consumes the code the run sent', async () => {
+    const container = createContainer({ llm: new FakeLlmAdapter('ok'), screenCapture: new FakeScreenCaptureAdapter() });
+    useHudStore.setState({ codeText: 'x := 1', screenshots: [], recording: false });
+    const { result } = renderHook(() => useAnalyzeScreenshot(), { wrapper: wrapperWithContainer(container) });
+
+    await act(async () => {
+      await result.current();
+    });
+
+    expect(useHudStore.getState().codeText).toBe('');
   });
 });

@@ -1,0 +1,11 @@
+{
+  // The eval harness runs in Node (fs, process), unlike the app/tests (DOM).
+  // A separate project keeps Node globals out of the browser code's types.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "baseUrl": "..",
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": ["./**/*.ts", "../src/vite-env.d.ts"]
+}

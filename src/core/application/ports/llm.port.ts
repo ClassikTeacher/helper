@@ -1,4 +1,4 @@
-import type { ModelRoute, ModelSlug } from '@/core/domain/model-route';
+import type { ModelRoute, ModelSlug, ReasoningEffort } from '@/core/domain/model-route';
 
 export interface LlmImagePart {
   readonly kind: 'image';
@@ -25,12 +25,22 @@ export interface LlmStreamRequest {
    */
   readonly model?: ModelSlug;
   /**
-   * Which class of model should serve this request (see `ModelRoute`). Callers
-   * name a WEIGHT, not a model: agents pass their `Agent.modelRoute`, plain text
-   * prompts leave it unset and get `DEFAULT_ROUTE`. `ResilientLlm` resolves it
-   * to a concrete chain, so the adapters below never see a route — only a slug.
+   * Task weight (R11). Callers declare the route — never a slug; `ResilientLlm`
+   * resolves it to a model chain + request profile. Absent = `light`.
    */
   readonly route?: ModelRoute;
+  /**
+   * Request parameters (R16), normally filled by `ResilientLlm` from the
+   * route's profile — callers leave them unset. An explicit value wins over the
+   * profile (the eval harness uses that to sweep configurations).
+   *
+   * `temperature`: omitted = the provider default.
+   */
+  readonly temperature?: number;
+  /** Reasoning effort; omitted = no reasoning requested. */
+  readonly reasoningEffort?: ReasoningEffort;
+  /** Longest image edge (px); larger images are downscaled in native before sending. */
+  readonly maxImageEdge?: number;
   readonly messages: readonly LlmMessage[];
   readonly signal?: AbortSignal;
 }
@@ -38,7 +48,7 @@ export interface LlmStreamRequest {
 export interface LlmUsage {
   readonly inputTokens: number;
   readonly outputTokens: number;
-  /** Request cost in USD, when the provider reports it (OpenRouter does). */
+  /** Request cost in USD (OpenRouter `usage.cost`), when reported. */
   readonly cost?: number;
 }
 
@@ -54,6 +64,16 @@ export interface LlmFinish {
   readonly reason: string;
   /** Token accounting, when the provider reports it (cost/UX). */
   readonly usage?: LlmUsage;
+  /**
+   * The model that actually produced the answer (R19): reported by the provider
+   * when available, otherwise the slug `ResilientLlm` attempted.
+   */
+  readonly model?: ModelSlug;
+  /**
+   * True when the answer came from a fallback model, not the route's primary
+   * (set by `ResilientLlm`) — a silent quality drop the HUD makes visible.
+   */
+  readonly fallback?: boolean;
 }
 /** Terminal failure: the stream aborted mid-flight. */
 export interface LlmError {

@@ -1,0 +1,19 @@
+{
+  "id": "solve-lru-cache",
+  "kind": "solve",
+  "agent": "solver",
+  "language": "ts",
+  "source": "task.md",
+  "heldOut": true,
+  "render": { "splitEvery": 26 },
+  "notes": "HELD-OUT, multi-frame: the statement is split across 2 consecutive screenshots (the constraints — incl. 'get counts as a use' — are only in frame 2). Tests that the batch is merged as ONE task.",
+  "findings": [
+    { "id": "L1", "severity": "critical", "origin": "seeded", "lines": [21, 22], "title": "O(1) get/put", "detail": "Map with insertion-order reordering (delete + set) or hash map + doubly linked list; no O(n) scans." },
+    { "id": "L2", "severity": "critical", "origin": "seeded", "lines": [42, 42], "title": "get refreshes recency", "detail": "A successful get moves the key to most-recently-used (the constraint from frame 2)." },
+    { "id": "L3", "severity": "high", "origin": "seeded", "lines": [15, 16], "title": "put on existing key", "detail": "Updates the value AND recency without evicting anything." },
+    { "id": "L4", "severity": "high", "origin": "seeded", "lines": [18, 19], "title": "Evicts the LRU key", "detail": "When size exceeds capacity after an insert, removes the least recently used key." },
+    { "id": "L5", "severity": "medium", "origin": "seeded", "lines": [11, 13], "title": "get returns -1 when missing", "detail": "Missing key → -1." },
+    { "id": "L6", "severity": "medium", "origin": "seeded", "lines": [8, 15], "title": "TypeScript class matching the interface", "detail": "class LRUCache with constructor(capacity: number), get(key: number): number, put(key: number, value: number): void; no third-party libraries." },
+    { "id": "L7", "severity": "low", "origin": "seeded", "lines": [21, 22], "title": "Complexity stated", "detail": "States O(1) average for get/put and O(capacity) space." }
+  ]
+}

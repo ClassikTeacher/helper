@@ -1,0 +1,24 @@
+{
+  "id": "py-job-worker-review",
+  "agent": "reviewer",
+  "language": "all",
+  "source": "source.py",
+  "heldOut": true,
+  "notes": "HELD-OUT case (R13): never tune prompts by looking at its answers — it exists to catch prompt changes that only fit go-http-cache-review. Seeded defects, authored 2026-09-25.",
+  "findings": [
+    { "id": "P1", "severity": "critical", "origin": "seeded", "lines": [14, 14], "title": "SQL injection via f-string", "detail": "`f\"... WHERE id = '{job_id}'\"` — job_id is interpolated into SQL. Use a parameterized query (`?`)." },
+    { "id": "P2", "severity": "critical", "origin": "seeded", "lines": [25, 29], "title": "Unbounded recursive retry", "detail": "On any failure `process` calls itself again with no attempt limit: a permanently failing job retries forever (growing sleeps, eventually RecursionError)." },
+    { "id": "P3", "severity": "high", "origin": "seeded", "lines": [15, 16], "title": "Missing job → TypeError", "detail": "`fetchone()` returns None for an unknown id and `row[0]` raises TypeError (outside the try)." },
+    { "id": "P4", "severity": "high", "origin": "seeded", "lines": [19, 19], "title": "Mutable default argument", "detail": "`attempts=[]` is shared across ALL calls: the backoff of one job grows with other jobs' failures, and the list grows forever." },
+    { "id": "P5", "severity": "high", "origin": "seeded", "lines": [25, 25], "title": "Bare except", "detail": "`except:` also catches KeyboardInterrupt/SystemExit/CancelledError and programming errors (KeyError on the job payload), turning them into silent retries." },
+    { "id": "P6", "severity": "high", "origin": "seeded", "lines": [28, 28], "title": "time.sleep blocks the event loop", "detail": "Blocking sleep inside `async def` freezes every coroutine; use `await asyncio.sleep`." },
+    { "id": "P7", "severity": "high", "origin": "seeded", "lines": [23, 23], "title": "Blocking HTTP client in async code", "detail": "`requests.post` is synchronous and blocks the loop; use an async client (httpx.AsyncClient/aiohttp) or run_in_executor." },
+    { "id": "P8", "severity": "medium", "origin": "seeded", "lines": [23, 23], "title": "No request timeout", "detail": "`requests.post` without `timeout=` can hang forever." },
+    { "id": "P9", "severity": "medium", "origin": "seeded", "lines": [24, 24], "title": "Status code not checked", "detail": "No `raise_for_status()`: an error response body is stored as a successful result (or `.json()` fails and is retried as if transient)." },
+    { "id": "P10", "severity": "medium", "origin": "seeded", "lines": [34, 36], "title": "Jobs run sequentially", "detail": "Awaiting coroutines one by one gives no concurrency; use `asyncio.gather`." },
+    { "id": "P11", "severity": "medium", "origin": "seeded", "lines": [37, 37], "title": "ZeroDivisionError on an empty id list", "detail": "`len(RESULTS) / len(ids)` fails when `ids` is empty." },
+    { "id": "P12", "severity": "medium", "origin": "seeded", "lines": [23, 23], "title": "Request target taken from stored payload", "detail": "The POST goes to `job[\"url\"]` from the database without validation — anyone who can write a job can make the worker call internal addresses (SSRF)." },
+    { "id": "P13", "severity": "low", "origin": "seeded", "lines": [8, 8], "title": "Module-level DB connection", "detail": "The sqlite connection is opened at import time, never closed, and not usable across threads." },
+    { "id": "P14", "severity": "low", "origin": "seeded", "lines": [10, 10], "title": "Global retries counter is write-only", "detail": "`retries` is mutated through `global` but never read — dead, misleading state." }
+  ]
+}

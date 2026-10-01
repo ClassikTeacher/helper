@@ -1,45 +1,121 @@
 /**
  * Domain value-objects for models. Pure — no I/O.
  *
- * Model choice is a set of resilient chains (a primary model plus an ordered
- * failover list), keyed by ROUTE — see `ModelRoute` below. The chains are built
- * from env in `bootstrap/model-chain.ts` and walked by
- * `application/services/resilient-llm.ts`. Agents do not name a model; they
- * name a route (`Agent.modelRoute`), so swapping the model behind "heavy" is an
- * env change, not a code change.
+ * Model choice is a resilient chain per ROUTE (a primary model plus an ordered
+ * failover list), see `application/services/resilient-llm.ts` +
+ * `bootstrap/model-chain.ts`. Agents do not pick a model slug: they declare the
+ * route (task weight) they need — `light` or `heavy` — and the resilient layer
+ * resolves it to a concrete chain and request profile.
  */
 
 /** An OpenRouter model slug, e.g. "anthropic/claude-haiku-4.5". */
 export type ModelSlug = string;
 
 /**
- * Which class of model a request should be served by. Deliberately named after
- * the WEIGHT of the task, not after the agent, so a future third agent just
- * picks a weight instead of forcing a new route:
- *
- * - `light` — fast turnaround matters most: theory questions, straightforward
- *   coding tasks, plain text prompts. This is the default for anything that
- *   doesn't ask for a route.
- * - `heavy` — depth matters more than latency: code review, where a missed bug
- *   costs far more than a slower first token.
- *
- * Both routes resolve to the SAME chain unless the per-route env vars are set
- * (see `buildModelChains`), so this is a seam, not a behaviour change.
+ * Task weight an agent declares instead of a model slug (R11):
+ * - `light` — latency matters most: the solver, plain text prompts. Default.
+ * - `heavy` — depth matters most: the reviewer (the R3 baseline showed review
+ *   quality is bounded by the model, while quick answers are not).
  */
 export type ModelRoute = 'light' | 'heavy';
 
-/** Route used when a request doesn't name one (plain prompts, tests). */
 export const DEFAULT_ROUTE: ModelRoute = 'light';
 
-/** Every route, for iteration (env parsing, tests). */
 export const MODEL_ROUTES: readonly ModelRoute[] = ['light', 'heavy'];
 
-/** The ordered failover chain to walk, per route. */
-export type ModelChains = Readonly<Record<ModelRoute, readonly ModelSlug[]>>;
+/**
+ * OpenRouter's normalized reasoning effort (`reasoning.effort`). The model
+ * thinks privately before answering; the thinking is excluded from the stream,
+ * so the HUD only ever shows the answer.
+ */
+export type ReasoningEffort = 'low' | 'medium' | 'high';
 
-/** Same chain for every route — the current (single-chain) configuration. */
-export function uniformChains(chain: readonly ModelSlug[]): ModelChains {
-  return { light: chain, heavy: chain };
+export const REASONING_EFFORTS: readonly ReasoningEffort[] = ['low', 'medium', 'high'];
+
+/**
+ * Per-route request profile (R16): which models to try, and with which request
+ * parameters. Sampling/reasoning/image size are properties of the ROUTE, not
+ * global constants, because what suits a fast solver (low temperature, small
+ * images) is wrong for a deep reviewer (reasoning, which is incompatible with a
+ * custom temperature on Anthropic; larger images for models that accept them).
+ */
+export interface RouteProfile {
+  /** Ordered failover chain: primary first. Non-empty, de-duplicated. */
+  readonly chain: readonly ModelSlug[];
+  /**
+   * Sampling temperature. `undefined` = do not send the parameter at all (the
+   * provider default applies). Always dropped when `reasoningEffort` is set —
+   * see `requestParamsFor`.
+   */
+  readonly temperature?: number;
+  /** Reasoning effort; `undefined` = no reasoning requested. */
+  readonly reasoningEffort?: ReasoningEffort;
+  /**
+   * Longest image edge (px) sent to the model. Larger screenshots are
+   * area-downscaled in native right before the request (R4/R17).
+   */
+  readonly maxImageEdge: number;
+}
+
+export type RouteProfiles = Readonly<Record<ModelRoute, RouteProfile>>;
+
+/**
+ * Default temperature (R5): low temperature trims chatter and stabilizes the
+ * answer format. Applies only to routes without reasoning.
+ */
+export const DEFAULT_TEMPERATURE = 0.3;
+
+/**
+ * Default longest image edge (R4): Anthropic downscales anything above ~1568 px
+ * on its side for Haiku-class models, so sending more only costs upload time
+ * and (for tile-priced fallbacks) tokens.
+ */
+export const DEFAULT_MAX_IMAGE_EDGE = 1568;
+
+/**
+ * Upper bound for `maxImageEdge` (R17): the high-resolution threshold of the
+ * Claude 5 family. A 2560×1440 frame passes through unscaled — the point is to
+ * keep small code fonts legible on a heavy route (costs up to ~2.7× image
+ * tokens per frame vs 1568). Captures are also capped to this in native.
+ */
+export const MAX_IMAGE_EDGE_LIMIT = 2576;
+
+/** Lower bound for `maxImageEdge`: below this, code on a screenshot is unreadable. */
+export const MIN_IMAGE_EDGE_LIMIT = 512;
+
+/** Request parameters a profile contributes to one LLM call. */
+export interface RouteRequestParams {
+  readonly temperature?: number;
+  readonly reasoningEffort?: ReasoningEffort;
+  readonly maxImageEdge: number;
+}
+
+/**
+ * The request parameters for a profile. Reasoning and a custom temperature are
+ * mutually exclusive: Anthropic rejects a modified temperature together with
+ * extended thinking, and a 400 is non-retryable (no failover would save it) —
+ * so reasoning wins and the temperature is dropped.
+ */
+export function requestParamsFor(profile: RouteProfile): RouteRequestParams {
+  return withSamplingRule({
+    ...(profile.temperature !== undefined ? { temperature: profile.temperature } : {}),
+    ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
+    maxImageEdge: profile.maxImageEdge,
+  });
+}
+
+/**
+ * THE single place of the reasoning-vs-temperature rule: when reasoning is
+ * requested, any temperature is dropped. Applied to the final, merged request
+ * parameters (`ResilientLlm`), so profile values and explicit caller values
+ * obey the same rule on every path (native, dev adapter, eval).
+ */
+export function withSamplingRule<T extends { temperature?: number; reasoningEffort?: ReasoningEffort }>(
+  params: T,
+): T {
+  if (!params.reasoningEffort || params.temperature === undefined) return params;
+  const { temperature: _temperature, ...rest } = params;
+  return rest as T;
 }
 
 /**
@@ -48,25 +124,19 @@ export function uniformChains(chain: readonly ModelSlug[]): ModelChains {
  * availability/IDs against OpenRouter docs before shipping (decisions.md §6).
  *
  * IMPORTANT — multimodality: the main scenario (screenshot → analysis) ALWAYS
- * sends an image, so every model on a failover chain must be MULTIMODAL.
+ * sends an image, so every model on the failover chain must be MULTIMODAL.
  * `deepseek` here is a text-only model: safe for text-only prompts, but it must
  * NOT sit in the screenshot failover chain (it would reject the image).
- *
- * ⚠️ `sonnet` is listed as the intended `heavy` candidate but is NOT wired in
- * yet: Claude 5-family models reject non-default sampling parameters with a
- * 400, and `openrouter_client.rs` sends `temperature` on every request (a 400
- * is classified non-retryable, so failover would not rescue it). Verify that
- * with one live request before pointing `VITE_HEAVY_MODEL` at it.
  */
 export const AVAILABLE_MODELS = {
   haiku: 'anthropic/claude-haiku-4.5', // multimodal
-  sonnet: 'anthropic/claude-sonnet-5', // multimodal — see the temperature caveat above
+  sonnet: 'anthropic/claude-sonnet-5', // multimodal — candidate for the heavy route (R11)
   geminiFlashLite: 'google/gemini-3.1-flash-lite', // multimodal
   gpt4oMini: 'openai/gpt-4o-mini', // multimodal
   deepseek: 'deepseek/deepseek-v4-flash', // text-only — see note above
 } as const satisfies Record<string, ModelSlug>;
 
-/** Primary model tried first on every request, for every route. */
+/** Primary model tried first on every request. */
 export const DEFAULT_MODEL: ModelSlug = AVAILABLE_MODELS.haiku;
 
 /**

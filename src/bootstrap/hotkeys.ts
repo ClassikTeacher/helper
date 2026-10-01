@@ -7,7 +7,7 @@ import type { AppContainer } from './container.types';
 type HotkeysContainer = Pick<AppContainer, 'platform' | 'useCases'>;
 
 /**
- * Four distinct global hotkeys. Overridable via `VITE_*` env vars
+ * Five distinct global hotkeys. Overridable via `VITE_*` env vars
  * (see `.env.example`) for easy tuning during early development; not exposed
  * as an in-app setting yet — see tasks.md backlog "Настраиваемый хоткей".
  */
@@ -39,6 +39,16 @@ export const SEND_ACCELERATOR =
  */
 export const RECORD_ACCELERATOR =
   import.meta.env.VITE_RECORD_ACCELERATOR || 'CommandOrControl+Alt+L';
+
+/**
+ * Stage the clipboard's text as the code for the next send (R15). The user
+ * selects code in the editor, copies it, and fires this — the exact text then
+ * travels as a numbered `<code_text>` block instead of being read from pixels.
+ * Default `Ctrl+Alt+X` avoids common IDE bindings (`Ctrl+Alt+V`/`C` are
+ * JetBrains refactorings). Override via `VITE_PASTE_CODE_ACCELERATOR`.
+ */
+export const PASTE_CODE_ACCELERATOR =
+  import.meta.env.VITE_PASTE_CODE_ACCELERATOR || 'CommandOrControl+Alt+X';
 
 /**
  * Toggle the HUD's visibility. Delegates to `overlay.toggle()`, which flips
@@ -85,6 +95,23 @@ async function captureToBuffer(container: HotkeysContainer): Promise<void> {
 }
 
 /**
+ * Read the clipboard into the staged code text (R15) and show the HUD. An
+ * empty/non-text clipboard is reported in the HUD instead of silently staging
+ * nothing.
+ */
+async function pasteCodeFromClipboard(container: HotkeysContainer): Promise<void> {
+  const text = await container.platform.clipboard.readText();
+  if (text.trim()) {
+    useHudStore.getState().setCodeText(text);
+  } else {
+    // `setError`, not `fail`: the hotkey may fire during a recording or a
+    // streaming answer, and must not flip their indicators off.
+    useHudStore.getState().setError('Буфер обмена не содержит текста — скопируйте код и повторите.');
+  }
+  await container.platform.overlay.show();
+}
+
+/**
  * Toggle loopback audio recording (phase 9) and show the HUD. The toggle logic
  * is shared with the record button (`toggle-recording.ts`) — here we additionally
  * surface the HUD first so the user sees the "● запись" indicator (on start) or
@@ -101,7 +128,7 @@ async function toggleRecordingHotkey(container: HotkeysContainer): Promise<void>
  * and `OverlayPort` (architecture.md §8: platform ports are wired by bootstrap,
  * never by UI components).
  *
- * The four hotkeys are registered independently (`allSettled`) so a conflict
+ * The five hotkeys are registered independently (`allSettled`) so a conflict
  * on one accelerator (e.g. already taken by another app) does not prevent the
  * others from registering. If any registration fails, the aggregated error is
  * rethrown so the caller can surface it (`ServicesProvider` shows the HUD with
@@ -123,6 +150,9 @@ export async function registerHotkeys(container: HotkeysContainer): Promise<void
     hotkey.register(RECORD_ACCELERATOR, () => {
       void toggleRecordingHotkey(container);
     }),
+    hotkey.register(PASTE_CODE_ACCELERATOR, () => {
+      void pasteCodeFromClipboard(container);
+    }),
   ]);
 
   const errors = results
@@ -143,5 +173,6 @@ export async function unregisterHotkeys(
     hotkey.unregister(CAPTURE_ACCELERATOR),
     hotkey.unregister(SEND_ACCELERATOR),
     hotkey.unregister(RECORD_ACCELERATOR),
+    hotkey.unregister(PASTE_CODE_ACCELERATOR),
   ]);
 }

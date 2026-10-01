@@ -18,15 +18,8 @@ use scap::{
 };
 
 use crate::dto::{CaptureRegion, CaptureRequest, CaptureResult};
+use crate::infra::image::{downscale_to_long_edge, encode_png, MAX_CAPTURE_LONG_EDGE_PX};
 use crate::ports::ScreenCapturer;
-
-/// Longest edge (px) a captured frame is downscaled to before PNG-encoding.
-/// 1568 px is the Anthropic vision sweet spot: anything larger is resized
-/// server-side anyway, so sending more pixels only inflates upload time (TTFT)
-/// and, on tile-priced fallback models (gpt-4o-mini), token cost — see
-/// agents-improvement.md R4. Code text on a 2560-wide screenshot stays legible
-/// at this size.
-const MAX_IMAGE_LONG_EDGE_PX: u32 = 1568;
 
 pub struct ScapCapturer;
 
@@ -48,7 +41,7 @@ impl ScreenCapturer for ScapCapturer {
             return Err("screen capture is not supported on this platform build".to_string());
         }
 
-        let target = select_target(request.display_index)?;
+        let target = select_target(request.display_index, request.display_name.as_deref())?;
 
         let options = Options {
             fps: 1,
@@ -81,10 +74,13 @@ impl ScreenCapturer for ScapCapturer {
             _ => return Err("unexpected frame format (expected BGRA)".to_string()),
         };
 
-        let (out_width, out_height, rgba) =
+        let (crop_width, crop_height, rgba) =
             bgra_to_rgba(width, height, &bgra, request.region.as_ref())?;
+        // Cap at the largest size any model uses (R4/R17): a 4K frame is
+        // area-downscaled once here; the per-request cap (route/model
+        // specific) is applied later in `llm_stream`. 2560×1440 passes as-is.
         let (out_width, out_height, rgba) =
-            downscale_to_long_edge(out_width, out_height, rgba, MAX_IMAGE_LONG_EDGE_PX);
+            downscale_to_long_edge(crop_width, crop_height, rgba, MAX_CAPTURE_LONG_EDGE_PX);
         let png = encode_png(out_width, out_height, &rgba)?;
 
         Ok(CaptureResult {
@@ -96,19 +92,40 @@ impl ScreenCapturer for ScapCapturer {
     }
 }
 
-/// Pick the capture target. `None` => scap's main display (the common case). A
-/// `display_index` selects the Nth display among all targets; out-of-range is a
-/// hard error rather than a silent fallback to the wrong screen.
-fn select_target(display_index: Option<u32>) -> Result<Option<Target>, String> {
-    match display_index {
-        None => Ok(None),
-        Some(idx) => get_all_targets()
+/// Pick the capture target. An explicit `display_index` selects the Nth
+/// display (out-of-range is a hard error — the caller asked for it). Otherwise
+/// `display_name` (the monitor under the cursor, resolved by `capture_screen`)
+/// is matched against the displays' device names; no match, or no name, falls
+/// back to scap's main display (`None`) — cursor detection is best-effort.
+fn select_target(
+    display_index: Option<u32>,
+    display_name: Option<&str>,
+) -> Result<Option<Target>, String> {
+    let displays = || {
+        get_all_targets()
             .into_iter()
             .filter(|t| matches!(t, Target::Display(_)))
+            .collect::<Vec<_>>()
+    };
+    if let Some(idx) = display_index {
+        return displays()
+            .into_iter()
             .nth(idx as usize)
             .map(Some)
-            .ok_or_else(|| format!("display index {idx} out of range")),
+            .ok_or_else(|| format!("display index {idx} out of range"));
     }
+    let Some(name) = display_name else {
+        return Ok(None);
+    };
+    Ok(displays()
+        .into_iter()
+        .find(|t| matches!(t, Target::Display(d) if same_device(&d.title, name))))
+}
+
+/// Whether two OS display device names are the same (case-insensitive —
+/// Windows device names are `\\.\DISPLAYn`, casing is not guaranteed). Pure.
+fn same_device(title: &str, name: &str) -> bool {
+    title.eq_ignore_ascii_case(name)
 }
 
 /// Convert a top-down BGRA frame to RGBA, optionally cropping to `region`. scap
@@ -171,92 +188,6 @@ fn bgra_to_rgba(
         }
     }
     Ok((rw, rh, rgba))
-}
-
-/// Downscales an RGBA image so its longest edge is at most `max_long_edge`,
-/// preserving aspect ratio. Returns the input untouched when it already fits —
-/// the common case for sub-QHD displays. Pure, so it is unit-tested without a
-/// display, like `bgra_to_rgba`.
-///
-/// Uses AREA AVERAGING (box filter), not bilinear: each dst pixel averages the
-/// whole src rectangle it covers, with fractional weights at the edges. At
-/// downscale factors above 2x (a 4K frame -> 1568 px is ~2.45x) bilinear's 2x2
-/// neighborhood skips src pixels entirely, aliasing exactly the thing this
-/// capture exists for — small code text. Area averaging consumes every src
-/// pixel, so thin glyph strokes dim proportionally instead of dropping out
-/// (review finding, 2026-07-22).
-fn downscale_to_long_edge(
-    width: u32,
-    height: u32,
-    rgba: Vec<u8>,
-    max_long_edge: u32,
-) -> (u32, u32, Vec<u8>) {
-    let long_edge = width.max(height);
-    if long_edge <= max_long_edge {
-        return (width, height, rgba);
-    }
-
-    let scale = max_long_edge as f64 / long_edge as f64;
-    // Round the short edge, pin the long edge exactly to the cap; both stay >= 1.
-    let (dst_w, dst_h) = if width >= height {
-        (max_long_edge, ((height as f64 * scale).round() as u32).max(1))
-    } else {
-        (((width as f64 * scale).round() as u32).max(1), max_long_edge)
-    };
-
-    let (sw, sh) = (width as f64, height as f64);
-    let mut out = vec![0u8; (dst_w as usize) * (dst_h as usize) * 4];
-    for dy in 0..dst_h {
-        // The src-space box this dst pixel covers: [y0f, y1f) x [x0f, x1f).
-        let y0f = dy as f64 * sh / dst_h as f64;
-        let y1f = (dy + 1) as f64 * sh / dst_h as f64;
-        for dx in 0..dst_w {
-            let x0f = dx as f64 * sw / dst_w as f64;
-            let x1f = (dx + 1) as f64 * sw / dst_w as f64;
-
-            let mut acc = [0.0f64; 4];
-            let mut sy = y0f.floor() as usize;
-            while (sy as f64) < y1f {
-                // Overlap of src row [sy, sy+1) with the box — 1.0 for interior
-                // rows, fractional at the box edges.
-                let wy = (sy as f64 + 1.0).min(y1f) - (sy as f64).max(y0f);
-                let mut sx = x0f.floor() as usize;
-                while (sx as f64) < x1f {
-                    let wx = (sx as f64 + 1.0).min(x1f) - (sx as f64).max(x0f);
-                    let si = (sy * width as usize + sx) * 4;
-                    let w = wx * wy;
-                    for c in 0..4 {
-                        acc[c] += rgba[si + c] as f64 * w;
-                    }
-                    sx += 1;
-                }
-                sy += 1;
-            }
-
-            let area = (x1f - x0f) * (y1f - y0f);
-            let di = ((dy as usize) * dst_w as usize + dx as usize) * 4;
-            for c in 0..4 {
-                out[di + c] = (acc[c] / area).round() as u8;
-            }
-        }
-    }
-    (dst_w, dst_h, out)
-}
-
-fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
-    let mut buf = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut buf, width, height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder
-            .write_header()
-            .map_err(|e| format!("png write_header failed: {e}"))?;
-        writer
-            .write_image_data(rgba)
-            .map_err(|e| format!("png write_image_data failed: {e}"))?;
-    }
-    Ok(buf)
 }
 
 fn now_millis() -> i64 {
@@ -322,84 +253,14 @@ mod tests {
     }
 
     #[test]
+    fn same_device_matches_display_names_case_insensitively() {
+        assert!(same_device(r"\\.\DISPLAY2", r"\\.\display2"));
+        assert!(!same_device(r"\\.\DISPLAY2", r"\\.\DISPLAY9"));
+    }
+
+    #[test]
     fn rejects_undersized_buffer() {
         let bgra = vec![0u8; 4]; // claims 2x2 but only holds 1 pixel
         assert!(bgra_to_rgba(2, 2, &bgra, None).is_err());
-    }
-
-    fn solid_rgba(width: u32, height: u32, px: [u8; 4]) -> Vec<u8> {
-        let mut v = Vec::with_capacity((width * height * 4) as usize);
-        for _ in 0..(width * height) {
-            v.extend_from_slice(&px);
-        }
-        v
-    }
-
-    #[test]
-    fn downscale_is_a_no_op_when_within_the_cap() {
-        let rgba = solid_rgba(1568, 900, [1, 2, 3, 4]);
-        let (w, h, out) = downscale_to_long_edge(1568, 900, rgba.clone(), 1568);
-        assert_eq!((w, h), (1568, 900));
-        assert_eq!(out, rgba); // untouched, not resampled
-    }
-
-    #[test]
-    fn downscale_caps_landscape_long_edge_and_keeps_aspect() {
-        // QHD screen: 2560x1440 -> long edge 1568, short edge 1440*(1568/2560)=882.
-        let rgba = solid_rgba(2560, 1440, [10, 20, 30, 255]);
-        let (w, h, out) = downscale_to_long_edge(2560, 1440, rgba, 1568);
-        assert_eq!((w, h), (1568, 882));
-        assert_eq!(out.len(), 1568 * 882 * 4);
-    }
-
-    #[test]
-    fn downscale_caps_portrait_long_edge() {
-        let rgba = solid_rgba(1440, 2560, [10, 20, 30, 255]);
-        let (w, h, _) = downscale_to_long_edge(1440, 2560, rgba, 1568);
-        assert_eq!((w, h), (882, 1568));
-    }
-
-    #[test]
-    fn downscale_preserves_solid_color_exactly() {
-        // Bilinear over a constant image must not shift channel values.
-        let rgba = solid_rgba(3200, 200, [7, 130, 200, 255]);
-        let (w, h, out) = downscale_to_long_edge(3200, 200, rgba, 1568);
-        assert_eq!((w, h), (1568, 98));
-        assert!(out.chunks_exact(4).all(|px| px == [7, 130, 200, 255]));
-    }
-
-    #[test]
-    fn downscale_averages_neighboring_pixels() {
-        // 2x1 squeezed into 1x1: the dst pixel covers both src pixels equally
-        // -> exact 50/50 average.
-        let rgba = vec![0, 0, 0, 255, 200, 100, 50, 255];
-        let (w, h, out) = downscale_to_long_edge(2, 1, rgba, 1);
-        assert_eq!((w, h), (1, 1));
-        assert_eq!(out, vec![100, 50, 25, 255]);
-    }
-
-    #[test]
-    fn downscale_consumes_every_source_pixel_not_just_a_2x2_neighborhood() {
-        // 4x1 -> 1x1 at 4x reduction. Bilinear would sample only the two
-        // central pixels (both 0 here) and lose the bright pixel entirely —
-        // the small-text aliasing failure mode. Area averaging must weigh all
-        // four: (0 + 0 + 0 + 120) / 4 = 30.
-        let rgba = vec![
-            0, 0, 0, 255, //
-            0, 0, 0, 255, //
-            0, 0, 0, 255, //
-            120, 120, 120, 255,
-        ];
-        let (w, h, out) = downscale_to_long_edge(4, 1, rgba, 1);
-        assert_eq!((w, h), (1, 1));
-        assert_eq!(out, vec![30, 30, 30, 255]);
-    }
-
-    #[test]
-    fn encodes_valid_png_signature() {
-        let rgba = vec![255u8, 0, 0, 255];
-        let png = encode_png(1, 1, &rgba).unwrap();
-        // PNG magic bytes.
-        assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
     }
 }

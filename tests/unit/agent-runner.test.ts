@@ -84,58 +84,6 @@ describe('AgentRunner.analyzeScreen', () => {
     expect(parts[1]).toEqual({ kind: 'image', imageBase64: 'second' });
   });
 
-  it('captures nothing and sends no image part on a text-only send (captureIfEmpty: false)', async () => {
-    // The user pasted the code/task into the input and staged no shots: the
-    // screen holds nothing relevant, so grabbing it would only feed the model
-    // noise. The run must carry the text alone.
-    const screenCapture = new FakeScreenCaptureAdapter();
-    const captureSpy = vi.spyOn(screenCapture, 'capture');
-    const llm = new FakeLlmAdapter('ok');
-    const streamSpy = vi.spyOn(llm, 'stream');
-    const runner = new AgentRunner({ screenCapture, llm });
-
-    await drain(
-      runner.analyzeScreen(
-        solverParams({ instructions: 'func main() {}', captureIfEmpty: false }),
-      ),
-    );
-
-    expect(captureSpy).not.toHaveBeenCalled();
-    const parts = streamSpy.mock.calls[0]?.[0].messages.find((m) => m.role === 'user')?.parts ?? [];
-    expect(parts.map((p) => p.kind)).toEqual(['text']);
-  });
-
-  it('tells the model there is no screenshot when the send is text-only', async () => {
-    // Otherwise the user text would order it to "analyze the attached
-    // screenshot" that does not exist, inviting a "не могу разобрать" answer.
-    const llm = new FakeLlmAdapter('ok');
-    const streamSpy = vi.spyOn(llm, 'stream');
-    const runner = new AgentRunner({ screenCapture: new FakeScreenCaptureAdapter(), llm });
-
-    await drain(
-      runner.analyzeScreen(solverParams({ instructions: 'review this', captureIfEmpty: false })),
-    );
-
-    const userText = streamSpy.mock.calls[0]?.[0].messages
-      .find((m) => m.role === 'user')
-      ?.parts.find((p) => p.kind === 'text');
-    const text = userText?.kind === 'text' ? userText.text : '';
-    expect(text).toContain('No screenshot is attached');
-    expect(text).not.toContain('Analyze the attached screenshot');
-  });
-
-  it('still captures a fresh screenshot when captureIfEmpty is left at its default', async () => {
-    // Guard the default: only an explicit `false` suppresses the fallback, so
-    // the hotkey/recording paths keep their one-shot ergonomics.
-    const screenCapture = new FakeScreenCaptureAdapter();
-    const captureSpy = vi.spyOn(screenCapture, 'capture');
-    const runner = new AgentRunner({ screenCapture, llm: new FakeLlmAdapter('ok') });
-
-    await drain(runner.analyzeScreen(solverParams({ instructions: 'some hint' })));
-
-    expect(captureSpy).toHaveBeenCalledTimes(1);
-  });
-
   it('sends the agent system prompt and mixes the language + instructions into the user text', async () => {
     const llm = new FakeLlmAdapter('ok');
     const streamSpy = vi.spyOn(llm, 'stream');
@@ -158,19 +106,47 @@ describe('AgentRunner.analyzeScreen', () => {
     expect(userText?.kind === 'text' && userText.text).toContain('use React');
   });
 
-  it('forwards the finish-chunk usage to the onUsage callback (R9)', async () => {
-    // FakeLlmAdapter reports usage on its terminal finish chunk; the runner
-    // must hand it to the optional callback instead of swallowing it.
-    const onUsage = vi.fn();
-    const runner = new AgentRunner({
-      screenCapture: new FakeScreenCaptureAdapter(),
-      llm: new FakeLlmAdapter('two words'),
-    });
+  it('sends pasted code as text and skips the fresh capture when nothing is staged (R15)', async () => {
+    const screenCapture = new FakeScreenCaptureAdapter();
+    const captureSpy = vi.spyOn(screenCapture, 'capture');
+    const llm = new FakeLlmAdapter('ok');
+    const streamSpy = vi.spyOn(llm, 'stream');
+    const runner = new AgentRunner({ screenCapture, llm });
 
-    await drain(runner.analyzeScreen(solverParams({ onUsage })));
+    await drain(runner.analyzeScreen(solverParams({ agent: AGENTS.reviewer, codeText: 'x := 1' })));
 
-    expect(onUsage).toHaveBeenCalledTimes(1);
-    expect(onUsage).toHaveBeenCalledWith({ inputTokens: 0, outputTokens: 2 });
+    expect(captureSpy).not.toHaveBeenCalled();
+    const parts = streamSpy.mock.calls[0]?.[0].messages.find((m) => m.role === 'user')?.parts ?? [];
+    expect(parts).toHaveLength(1);
+    expect(parts[0]?.kind === 'text' && parts[0].text).toContain('<code_text>\n1| x := 1\n</code_text>');
+  });
+
+  it('keeps the staged screenshots alongside pasted code', async () => {
+    const llm = new FakeLlmAdapter('ok');
+    const streamSpy = vi.spyOn(llm, 'stream');
+    const runner = new AgentRunner({ screenCapture: new FakeScreenCaptureAdapter(), llm });
+
+    await drain(
+      runner.analyzeScreen(solverParams({ codeText: 'x', screenshots: [PINNED_SCREENSHOT] })),
+    );
+
+    const parts = streamSpy.mock.calls[0]?.[0].messages.find((m) => m.role === 'user')?.parts ?? [];
+    expect(parts.map((p) => p.kind)).toEqual(['image', 'text']);
+  });
+
+  it("passes the agent's route (R11) and reports the finish chunk out-of-band (R19)", async () => {
+    const llm = new FakeLlmAdapter('ok');
+    const streamSpy = vi.spyOn(llm, 'stream');
+    const onFinish = vi.fn();
+    const runner = new AgentRunner({ screenCapture: new FakeScreenCaptureAdapter(), llm });
+
+    const text = await drain(
+      runner.analyzeScreen(solverParams({ agent: AGENTS.reviewer, onFinish })),
+    );
+
+    expect(streamSpy.mock.calls[0]?.[0].route).toBe('heavy');
+    expect(onFinish).toHaveBeenCalledWith(expect.objectContaining({ type: 'finish', reason: 'stop' }));
+    expect(text).toBe('ok ');
   });
 
   it("does not choose a model — that is the resilient LLM layer's job", async () => {
@@ -183,23 +159,5 @@ describe('AgentRunner.analyzeScreen', () => {
     await drain(runner.analyzeScreen(solverParams()));
 
     expect(streamSpy.mock.calls[0]?.[0].model).toBeUndefined();
-  });
-
-  it("names the agent's model ROUTE so review can be served by a heavier model (R11)", async () => {
-    // The runner still picks no model — it forwards the agent's declared weight
-    // and lets ResilientLlm resolve it to a chain.
-    const llm = new FakeLlmAdapter('ok');
-    const streamSpy = vi.spyOn(llm, 'stream');
-    const runner = new AgentRunner({ screenCapture: new FakeScreenCaptureAdapter(), llm });
-
-    await drain(runner.analyzeScreen(solverParams()));
-    expect(streamSpy.mock.calls[0]?.[0].route).toBe(AGENTS.solver.modelRoute);
-
-    await drain(runner.analyzeScreen({ ...solverParams(), agent: AGENTS.reviewer }));
-    expect(streamSpy.mock.calls[1]?.[0].route).toBe(AGENTS.reviewer.modelRoute);
-
-    // And the two agents genuinely ask for different weights.
-    expect(AGENTS.solver.modelRoute).toBe('light');
-    expect(AGENTS.reviewer.modelRoute).toBe('heavy');
   });
 });

@@ -32,8 +32,8 @@ export async function toggleRecording(useCases: AppContainer['useCases']): Promi
   }
 
   try {
-    await useCases.transcribeAudio.startRecording();
-    store.setRecording(true);
+    const { maxSeconds } = await useCases.transcribeAudio.startRecording();
+    store.startRecordingClock(maxSeconds);
     // Drop a stale transcript preview so the HUD reflects only this recording.
     if (store.transcript) store.setTranscript('');
   } catch (err) {

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { Screenshot } from '@/core/domain/screenshot';
-import type { LlmUsage } from '@/core/application/ports/llm.port';
 import type { AgentId } from '@/core/domain/agent';
+import type { ConversationTurn, RunStatus } from '@/core/application/services/agent-runner';
 import { DEFAULT_AGENT_ID } from '@/core/domain/agents-catalog';
 import { DEFAULT_LANGUAGE, type ProgrammingLanguage } from '@/core/domain/language';
 
@@ -11,6 +11,23 @@ import { DEFAULT_LANGUAGE, type ProgrammingLanguage } from '@/core/domain/langua
  * preview strip readable.
  */
 export const MAX_SCREENSHOTS = 5;
+
+/**
+ * What the HUD shows about the last completed run (R9/R19): the serving model,
+ * whether it was a fallback, the finish reason, tokens and cost. Mirrors the
+ * terminal `finish` chunk — kept as a UI-local shape so the store stays a
+ * plain view model.
+ */
+export interface RunInfo {
+  readonly model?: string;
+  readonly fallback: boolean;
+  /** Provider finish reason; `length` means the provider cut the answer short. */
+  readonly reason: string;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  /** USD. */
+  readonly cost?: number;
+}
 
 /**
  * UI-only state for the HUD (Zustand). No business logic, no domain data beyond
@@ -50,22 +67,47 @@ interface HudState {
   readonly activeHint: string;
   /** True while loopback audio is being captured (phase 9). */
   readonly recording: boolean;
+  /** When the current recording started (epoch ms), null when not recording. */
+  readonly recordingStartedAt: number | null;
+  /** Rolling window the recording keeps (only the last N seconds are sent). */
+  readonly recordingWindowSecs: number;
   /** True while the captured audio is being transcribed (phase 9). */
   readonly transcribing: boolean;
   /** The transcript applied to the current/last analysis (empty when none). */
   readonly transcript: string;
   /**
-   * Token/cost accounting of the last finished answer, when the provider
-   * reported it (agents-improvement.md R9). Cleared when a new stream starts.
+   * The code as exact text (R15), pasted into the HUD or taken from the
+   * clipboard by the paste-code hotkey. Consumed by a successful run (like the
+   * hints), so stale code never overrides the NEXT batch's screenshots.
    */
-  readonly usage: LlmUsage | null;
+  readonly codeText: string;
+  /** Model/usage/cost of the last completed run; null while streaming or before any run. */
+  readonly lastRun: RunInfo | null;
+  /** True when the current answer was stopped by the user (partial answer kept). */
+  readonly stopped: boolean;
+  /**
+   * The current conversation thread (P1 item 9): the last analysis and any
+   * follow-ups, as text, so a follow-up question can refer to them. A new
+   * analysis starts a new thread; null before the first answer.
+   */
+  readonly thread: { readonly agentId: AgentId; readonly turns: readonly ConversationTurn[] } | null;
+  /** Progress before the first token (e.g. reading the screen); null otherwise. */
+  readonly phase: RunStatus | null;
 
   open(): void;
   close(): void;
   startStreaming(): void;
   appendAnswer(delta: string): void;
   finishStreaming(): void;
+  /** The user stopped the answer: streaming ends, the partial answer stays. */
+  stopStreaming(): void;
   fail(message: string): void;
+  /**
+   * Show an error WITHOUT the terminal side effects of `fail` (which also stops
+   * the streaming/recording/transcribing indicators). For hotkey feedback that
+   * must not disturb a run or a recording in progress.
+   */
+  setError(message: string | null): void;
   /** Append a screenshot to the batch (no-op once `MAX_SCREENSHOTS` is reached). */
   addScreenshot(screenshot: Screenshot): void;
   /** Drop the screenshot at `index` from the batch. */
@@ -79,12 +121,16 @@ interface HudState {
   setActiveHint(hint: string): void;
   /** Set the recording flag (record hotkey/button toggle). */
   setRecording(recording: boolean): void;
+  /** A recording started now; it keeps the last `windowSecs`. */
+  startRecordingClock(windowSecs: number): void;
   /** Enter the transcribing state: recording stops, spinner shows, prior transcript cleared. */
   startTranscribing(): void;
   /** Store the finished transcript and clear the transcribing spinner. */
   setTranscript(transcript: string): void;
-  /** Store the finished answer's token/cost accounting. */
-  setUsage(usage: LlmUsage): void;
+  setCodeText(codeText: string): void;
+  setLastRun(info: RunInfo | null): void;
+  setThread(thread: HudState['thread']): void;
+  setPhase(phase: RunStatus | null): void;
   reset(): void;
 }
 
@@ -100,21 +146,44 @@ export const useHudStore = create<HudState>((set) => ({
   instructions: '',
   activeHint: '',
   recording: false,
+  recordingStartedAt: null,
+  recordingWindowSecs: 60,
   transcribing: false,
   transcript: '',
-  usage: null,
+  codeText: '',
+  lastRun: null,
+  stopped: false,
+  thread: null,
+  phase: null,
 
   open: () => set({ visible: true }),
   close: () => set({ visible: false }),
   startStreaming: () =>
-    set({ streaming: true, answer: '', error: null, usage: null, visible: true }),
-  appendAnswer: (delta) => set((s) => ({ answer: s.answer + delta })),
-  finishStreaming: () => set({ streaming: false }),
+    set({
+      streaming: true,
+      answer: '',
+      error: null,
+      visible: true,
+      lastRun: null,
+      stopped: false,
+      phase: null,
+    }),
+  appendAnswer: (delta) => set((s) => ({ answer: s.answer + delta, phase: null })),
+  finishStreaming: () => set({ streaming: false, phase: null }),
+  stopStreaming: () => set({ streaming: false, transcribing: false, stopped: true, phase: null }),
   // Any terminal failure also clears the recording/transcribing flags — a failed
   // STT call (or a failed analyze after transcription) must not leave the "●
   // запись"/"расшифровка…" indicators stuck on when nothing is actually running.
   fail: (message) =>
-    set({ streaming: false, recording: false, transcribing: false, error: message }),
+    set({
+      streaming: false,
+      recording: false,
+      recordingStartedAt: null,
+      transcribing: false,
+      phase: null,
+      error: message,
+    }),
+  setError: (message) => set({ error: message }),
   addScreenshot: (screenshot) =>
     set((s) =>
       // Cap the batch: ignore extra captures past the limit rather than
@@ -131,10 +200,17 @@ export const useHudStore = create<HudState>((set) => ({
   setLanguage: (language) => set({ language }),
   setInstructions: (instructions) => set({ instructions }),
   setActiveHint: (hint) => set({ activeHint: hint }),
-  setRecording: (recording) => set({ recording }),
-  startTranscribing: () => set({ recording: false, transcribing: true, transcript: '', error: null }),
+  setRecording: (recording) =>
+    set(recording ? { recording } : { recording, recordingStartedAt: null }),
+  startRecordingClock: (windowSecs) =>
+    set({ recording: true, recordingStartedAt: Date.now(), recordingWindowSecs: windowSecs }),
+  startTranscribing: () =>
+    set({ recording: false, recordingStartedAt: null, transcribing: true, transcript: '', error: null }),
   setTranscript: (transcript) => set({ transcript, transcribing: false }),
-  setUsage: (usage) => set({ usage }),
+  setCodeText: (codeText) => set({ codeText }),
+  setLastRun: (lastRun) => set({ lastRun }),
+  setThread: (thread) => set({ thread }),
+  setPhase: (phase) => set({ phase }),
   reset: () =>
     set({
       streaming: false,
@@ -143,8 +219,13 @@ export const useHudStore = create<HudState>((set) => ({
       screenshots: [],
       activeHint: '',
       recording: false,
+      recordingStartedAt: null,
       transcribing: false,
       transcript: '',
-      usage: null,
+      codeText: '',
+      lastRun: null,
+      stopped: false,
+      thread: null,
+      phase: null,
     }),
 }));

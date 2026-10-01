@@ -1,4 +1,7 @@
-import type { AudioTranscriptionPort } from '@/core/application/ports/audio-transcription.port';
+import type {
+  AudioTranscriptionPort,
+  RecordingInfo,
+} from '@/core/application/ports/audio-transcription.port';
 
 /**
  * Use-case: control loopback recording and transcribe it (phase 9). Thin seam
@@ -10,7 +13,7 @@ import type { AudioTranscriptionPort } from '@/core/application/ports/audio-tran
 export class TranscribeAudioUseCase {
   constructor(private readonly audio: AudioTranscriptionPort) {}
 
-  startRecording(): Promise<void> {
+  startRecording(): Promise<RecordingInfo> {
     return this.audio.startRecording();
   }
 

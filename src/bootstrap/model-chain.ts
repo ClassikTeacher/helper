@@ -1,56 +1,86 @@
-import { DEFAULT_MODEL, DEFAULT_FALLBACKS } from '@/core/domain/model-route';
-import type { ModelChains, ModelSlug } from '@/core/domain/model-route';
+import {
+  DEFAULT_FALLBACKS,
+  DEFAULT_MAX_IMAGE_EDGE,
+  DEFAULT_MODEL,
+  DEFAULT_TEMPERATURE,
+  MAX_IMAGE_EDGE_LIMIT,
+  MIN_IMAGE_EDGE_LIMIT,
+  REASONING_EFFORTS,
+  type ModelRoute,
+  type ModelSlug,
+  type ReasoningEffort,
+  type RouteProfile,
+  type RouteProfiles,
+} from '@/core/domain/model-route';
 import { dedupeModels } from '@/core/application/services/resilient-llm';
+import type { ScreenTranscriberConfig } from '@/core/application/services/screen-transcriber';
+import type { AgentId } from '@/core/domain/agent';
 
 /**
- * Builds the ordered model chains the resilient LLM layer walks on failure —
- * one chain PER ROUTE (see `ModelRoute`), from env, so the models can change
- * without a rebuild of the core.
+ * Builds the BASE model chain from env, so the models can change without a
+ * rebuild of the core:
  *
- * Base chain (applies to every route unless overridden):
  *   VITE_DEFAULT_MODEL    -> the primary model, tried first
  *   VITE_MODEL_FALLBACKS  -> comma-separated fallback models, tried in order
  *                            when the primary (or a prior fallback) fails with
  *                            a retryable/provider-side error
  *
- * Per-route overrides — this is the seam that lets code review run on a
- * stronger model than plain questions (agents-improvement.md R11):
- *   VITE_LIGHT_MODEL / VITE_LIGHT_MODEL_FALLBACKS  -> solver, plain prompts
- *   VITE_HEAVY_MODEL / VITE_HEAVY_MODEL_FALLBACKS  -> reviewer
- *
- * Each slot falls back to the base slot, and the base falls back to the
- * compiled-in defaults. With no per-route vars set — the current shipping
- * configuration — both routes resolve to the SAME chain, so this is a seam,
- * not a behaviour change.
- *
- * The returned chains are `[primary, ...fallbacks]`, de-duplicated in order —
- * the fallback list may legitimately repeat the primary, and we never want to
- * try the same model twice in a row.
+ * The returned chain is `[primary, ...fallbacks]`, de-duplicated in order — the
+ * fallback list may legitimately repeat the primary, and we never want to try
+ * the same model twice in a row. Each slot falls back to its compiled-in
+ * default when its var is unset or blank.
  *
  * Reading `import.meta.env` is a composition-root concern (like `container.ts`
- * and `hotkeys.ts`); `ResilientLlm` itself just consumes the chains it's given.
- * Each var is read as a LITERAL member access, because that is the only form
- * Vite statically replaces at build time (`import.meta.env[key]` would be
- * `undefined` in a production bundle).
+ * and `hotkeys.ts`); `ResilientLlm` itself just consumes what it's given.
  *
- * NB: the main scenario always sends a screenshot, so every model in every
- * chain must be MULTIMODAL — see the note on `AVAILABLE_MODELS` in
- * model-route.ts.
+ * NB: the main scenario always sends a screenshot, so every model in the chain
+ * must be MULTIMODAL — see the note on `AVAILABLE_MODELS` in model-route.ts.
  */
-export function buildModelChains(): ModelChains {
-  const basePrimary = pick(import.meta.env.VITE_DEFAULT_MODEL, DEFAULT_MODEL);
-  const baseFallbacks = parseList(import.meta.env.VITE_MODEL_FALLBACKS) ?? DEFAULT_FALLBACKS;
+export function buildModelChain(): ModelSlug[] {
+  const primary = pick(import.meta.env.VITE_DEFAULT_MODEL, DEFAULT_MODEL);
+  const fallbacks = parseList(import.meta.env.VITE_MODEL_FALLBACKS) ?? DEFAULT_FALLBACKS;
+  return dedupeModels([primary, ...fallbacks]);
+}
 
-  const chain = (primary: string | undefined, fallbacks: string | undefined): ModelSlug[] =>
-    dedupeModels([pick(primary, basePrimary), ...(parseList(fallbacks) ?? baseFallbacks)]);
+/**
+ * Builds a request profile per route (R11 + R16) from env. Every slot falls
+ * back to the base value, so with no per-route vars set BOTH routes resolve to
+ * the same chain and parameters — a seam, not a behavior switch:
+ *
+ *   VITE_{LIGHT,HEAVY}_MODEL              primary (default: VITE_DEFAULT_MODEL)
+ *   VITE_{LIGHT,HEAVY}_MODEL_FALLBACKS    fallbacks (default: the whole base chain)
+ *   VITE_{LIGHT,HEAVY}_TEMPERATURE        number, or "off" to not send it (default 0.3)
+ *   VITE_{LIGHT,HEAVY}_REASONING          off | low | medium | high (default off)
+ *   VITE_{LIGHT,HEAVY}_MAX_IMAGE_EDGE     px, 512–2576 (default 1568)
+ *
+ * Invalid values fall back to the default rather than failing startup: this is
+ * a tuning surface, and a typo must not take the app down. Reasoning, when set,
+ * suppresses the temperature (see `requestParamsFor`).
+ */
+export function buildModelRoutes(): RouteProfiles {
+  const base = buildModelChain();
+  return { light: buildRoute('LIGHT', base), heavy: buildRoute('HEAVY', base) };
+}
 
+type RoutePrefix = Uppercase<ModelRoute>;
+
+function buildRoute(prefix: RoutePrefix, base: readonly ModelSlug[]): RouteProfile {
+  const env = import.meta.env;
+  const primary = pick(env[`VITE_${prefix}_MODEL`], base[0] ?? DEFAULT_MODEL);
+  // Default fallbacks = the WHOLE base chain (the route primary is deduped
+  // out), so overriding only the route primary never drops the base primary.
+  const fallbacks = parseList(env[`VITE_${prefix}_MODEL_FALLBACKS`]) ?? base;
+  const temperature = parseTemperature(env[`VITE_${prefix}_TEMPERATURE`]);
+  const reasoningEffort = parseReasoning(env[`VITE_${prefix}_REASONING`]);
   return {
-    light: chain(import.meta.env.VITE_LIGHT_MODEL, import.meta.env.VITE_LIGHT_MODEL_FALLBACKS),
-    heavy: chain(import.meta.env.VITE_HEAVY_MODEL, import.meta.env.VITE_HEAVY_MODEL_FALLBACKS),
+    chain: dedupeModels([primary, ...fallbacks]),
+    ...(temperature !== undefined ? { temperature } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    maxImageEdge: parseImageEdge(env[`VITE_${prefix}_MAX_IMAGE_EDGE`]),
   };
 }
 
-/** Trimmed env value if non-empty, else the default for that slot. */
+/** Trimmed env value if non-empty, else the compiled-in default for that slot. */
 function pick(value: string | undefined, fallback: string): string {
   const trimmed = value?.trim();
   return trimmed ? trimmed : fallback;
@@ -59,8 +89,7 @@ function pick(value: string | undefined, fallback: string): string {
 /**
  * Parses a comma-separated model list, trimming each entry and dropping blanks.
  * Returns `undefined` when the var is unset or contains no usable entries, so
- * the caller can fall back to the next slot (base list, then compiled-in
- * defaults) rather than an empty chain.
+ * the caller can fall back to the default list (rather than an empty chain).
  */
 function parseList(value: string | undefined): ModelSlug[] | undefined {
   if (value === undefined) return undefined;
@@ -69,4 +98,46 @@ function parseList(value: string | undefined): ModelSlug[] | undefined {
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
   return items.length > 0 ? items : undefined;
+}
+
+/** `off` → not sent; a number in [0, 2] → that; unset/invalid → the default. */
+export function parseTemperature(value: string | undefined): number | undefined {
+  const trimmed = value?.trim().toLowerCase();
+  if (!trimmed) return DEFAULT_TEMPERATURE;
+  if (trimmed === 'off' || trimmed === 'none') return undefined;
+  const n = Number(trimmed);
+  return Number.isFinite(n) && n >= 0 && n <= 2 ? n : DEFAULT_TEMPERATURE;
+}
+
+/** `low|medium|high` → that effort; unset/`off`/invalid → no reasoning. */
+export function parseReasoning(value: string | undefined): ReasoningEffort | undefined {
+  const trimmed = value?.trim().toLowerCase();
+  return REASONING_EFFORTS.find((effort) => effort === trimmed);
+}
+
+/** An integer edge in [MIN, MAX]; unset/invalid → the default. Out-of-range is clamped. */
+export function parseImageEdge(value: string | undefined): number {
+  const n = Number(value?.trim());
+  if (!value?.trim() || !Number.isFinite(n)) return DEFAULT_MAX_IMAGE_EDGE;
+  return Math.min(MAX_IMAGE_EDGE_LIMIT, Math.max(MIN_IMAGE_EDGE_LIMIT, Math.round(n)));
+}
+
+/**
+ * Screen-transcription pass config (P1 item 7) from env:
+ *
+ *   VITE_AUTO_TRANSCRIBE   off (default) | reviewer | solver | all | comma list of agent ids
+ *   VITE_TRANSCRIBE_MODEL  model for the pass (default: the light route's chain)
+ *
+ * Returns null when the pass is off — the runner then never transcribes.
+ */
+export function buildTranscriberConfig(): ScreenTranscriberConfig | null {
+  const raw = import.meta.env.VITE_AUTO_TRANSCRIBE?.trim().toLowerCase();
+  if (!raw || raw === 'off') return null;
+  const ids: AgentId[] = raw === 'all' ? ['solver', 'reviewer'] : [];
+  for (const part of raw.split(',').map((p) => p.trim())) {
+    if (part === 'solver' || part === 'reviewer') ids.push(part);
+  }
+  if (ids.length === 0) return null;
+  const model = import.meta.env.VITE_TRANSCRIBE_MODEL?.trim();
+  return { agents: new Set(ids), ...(model ? { model } : {}) };
 }

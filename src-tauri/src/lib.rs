@@ -27,6 +27,8 @@ pub struct AppState {
     /// tests in `infra::openrouter_client::tests` (architecture.md §6: traits
     /// only when a fake is actually needed).
     pub llm: OpenRouterClient,
+    /// In-flight `llm_stream` requests that `llm_cancel` can stop.
+    pub llm_cancels: infra::llm_cancel::CancelRegistry,
     /// Loopback audio recorder (phase 9). Behind a trait so tests/non-Windows
     /// can swap it; the real impl is WASAPI-only.
     pub audio: Box<dyn AudioRecorder>,
@@ -44,6 +46,7 @@ impl AppState {
             ocr: Box::new(infra::ort_ocr::OrtOcr::new()),
             secrets: Box::new(infra::keyring_secrets::KeyringSecrets::new()),
             llm: OpenRouterClient::new(),
+            llm_cancels: infra::llm_cancel::CancelRegistry::new(),
             audio: Box::new(WasapiLoopbackRecorder::new()),
             stt: SttClient::new(),
         }
@@ -75,11 +78,15 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_sql::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
+        // R15: the paste-code hotkey reads the clipboard natively (a global
+        // hotkey has no user gesture, so the webview Clipboard API can't).
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState::build_default())
         .invoke_handler(tauri::generate_handler![
             commands::capture::capture_screen,
             commands::ocr::ocr_image,
             commands::llm::llm_stream,
+            commands::llm::llm_cancel,
             commands::secrets::secret_get,
             commands::secrets::secret_set,
             commands::audio::audio_start_capture,

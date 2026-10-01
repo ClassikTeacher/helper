@@ -1,5 +1,5 @@
 import { useHudStore } from '@/ui/store/hud.store';
-import { analyzeAndStream } from './analyze-and-stream';
+import { analyzeAndStream, followUpAndStream } from './analyze-and-stream';
 import { resolveAgent } from '@/core/domain/agents-catalog';
 import type { AppContainer } from './container.types';
 
@@ -11,24 +11,24 @@ import type { AppContainer } from './container.types';
  * use-cases only — architecture.md §8) can call it. `sendBatch` wraps this with
  * `overlay.show()` for the hotkey path.
  *
- * A send is only an error when there is NOTHING to send: no staged shots, no
- * active recording, AND an empty input. Any ONE of the three is enough:
- * - shots staged → analyze them;
- * - recording → an empty batch is allowed, the runner falls back to a single
- *   fresh capture so an audio-only question (voice + whatever is on screen now)
- *   still works;
- * - text typed/pasted into the input with nothing else → a TEXT-ONLY send: the
- *   code or task IS the text, so no screenshot is required and none is grabbed
- *   (`captureIfEmpty: false`) — the current screen would only be noise.
+ * An empty send is only an error when there is NOTHING to send: no staged
+ * shots, no pasted code (R15) AND no active recording. While recording, an
+ * empty batch is allowed — the runner falls back to a single fresh capture so
+ * an audio-only question (voice + whatever is on screen now) still works. With
+ * pasted code and no shots, the request is text-only.
  */
 export async function runSend(useCases: AppContainer['useCases']): Promise<void> {
-  const { screenshots, recording, agentId, language, instructions } = useHudStore.getState();
-  const hasText = instructions.trim().length > 0;
-  if (screenshots.length === 0 && !recording && !hasText) {
+  const { screenshots, recording, transcribing, agentId, language, instructions, codeText } =
+    useHudStore.getState();
+  // While the previous send is still transcribing, a new send is ignored: its
+  // audio is already being processed and would otherwise be lost (a send
+  // DURING streaming is fine — it supersedes the running answer, see run-control).
+  if (transcribing) return;
+  if (screenshots.length === 0 && !recording && !codeText.trim()) {
     useHudStore
       .getState()
       .fail(
-        'Нечего анализировать — сделайте скриншот (хоткей захвата) или введите текст задачи в поле ввода.',
+        'Нет данных для анализа — сделайте хотя бы один скриншот (хоткей захвата) или вставьте код текстом.',
       );
     return;
   }
@@ -38,9 +38,19 @@ export async function runSend(useCases: AppContainer['useCases']): Promise<void>
     language,
     instructions,
     screenshots,
-    // Text-only: nothing staged and no audio — don't grab the screen.
-    ...(screenshots.length === 0 && !recording ? { captureIfEmpty: false } : {}),
+    ...(codeText.trim() ? { codeText } : {}),
   });
+}
+
+/**
+ * Ask a follow-up about the current answer (P1 item 9): the input box text is
+ * the question, the current thread is the context. No-op without a thread or
+ * a question, and while a previous send is still transcribing.
+ */
+export async function runFollowUp(useCases: AppContainer['useCases']): Promise<void> {
+  const { thread, instructions, transcribing } = useHudStore.getState();
+  if (transcribing || !thread || !instructions.trim()) return;
+  await followUpAndStream(useCases, { agent: resolveAgent(thread.agentId), question: instructions });
 }
 
 /**
