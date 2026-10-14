@@ -3,13 +3,13 @@ import { useHudStore, MAX_SCREENSHOTS } from '@/ui/store/hud.store';
 import { useAnalyzeScreenshot } from '@/ui/hooks/useAnalyzeScreenshot';
 import { useToggleRecording } from '@/ui/hooks/useToggleRecording';
 import { useStopRun } from '@/ui/hooks/useStopRun';
-import { useFollowUp } from '@/ui/hooks/useFollowUp';
 import { useElapsedSeconds } from '@/ui/hooks/useElapsedSeconds';
 import { useApiKeySettings } from '@/ui/hooks/useApiKeySettings';
 import { AGENT_LIST, resolveAgent } from '@/core/domain/agents-catalog';
 import { AgentSwitch } from './AgentSwitch';
 import { AudioControls } from './AudioControls';
 import { CodeTextInput } from './CodeTextInput';
+import { DialogBar } from './DialogBar';
 import { LanguageSelect } from './LanguageSelect';
 import { MessageList } from './MessageList';
 import { PromptInput } from './PromptInput';
@@ -37,13 +37,14 @@ export function Hud() {
   const codeText = useHudStore((s) => s.codeText);
   const lastRun = useHudStore((s) => s.lastRun);
   const stopped = useHudStore((s) => s.stopped);
-  const hasThread = useHudStore((s) => s.thread !== null);
+  const dialogTurns = useHudStore((s) => s.dialogs[s.agentId]?.turns.length ?? 0);
   const phase = useHudStore((s) => s.phase);
   const recordingStartedAt = useHudStore((s) => s.recordingStartedAt);
   const recordingWindowSecs = useHudStore((s) => s.recordingWindowSecs);
   const recordingElapsed = useElapsedSeconds(recordingStartedAt);
   const setCodeText = useHudStore((s) => s.setCodeText);
   const setAgentId = useHudStore((s) => s.setAgentId);
+  const newDialog = useHudStore((s) => s.newDialog);
   const setLanguage = useHudStore((s) => s.setLanguage);
   const setInstructions = useHudStore((s) => s.setInstructions);
   const removeScreenshot = useHudStore((s) => s.removeScreenshot);
@@ -51,7 +52,6 @@ export function Hud() {
   const analyze = useAnalyzeScreenshot();
   const toggleRecording = useToggleRecording();
   const stop = useStopRun(streaming);
-  const followUp = useFollowUp();
   const apiKey = useApiKeySettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -132,13 +132,23 @@ export function Hud() {
         {settingsOpen && (
           <SettingsPanel hasKey={apiKey.hasKey} status={apiKey.status} error={apiKey.error} onSave={apiKey.save} />
         )}
-        {/* Agent switch + (solver-only) language selector. */}
+        {/*
+          Agent switch + (solver-only) language selector. Each mode has its own
+          dialog; switching is blocked while a message is in flight (transcribing
+          included), so its answer always lands in the mode it was sent from.
+        */}
         <div className="mb-3 flex items-center justify-between gap-3">
-          <AgentSwitch agents={AGENT_LIST} selected={agentId} disabled={streaming} onSelect={setAgentId} />
+          <AgentSwitch
+            agents={AGENT_LIST}
+            selected={agentId}
+            disabled={streaming || transcribing}
+            onSelect={setAgentId}
+          />
           {selectedAgent.requiresLanguage && (
             <LanguageSelect value={language} disabled={streaming} onChange={setLanguage} />
           )}
         </div>
+        <DialogBar turnCount={dialogTurns} disabled={streaming || transcribing} onNewDialog={newDialog} />
         <ScreenshotStrip
           screenshots={screenshots}
           max={MAX_SCREENSHOTS}
@@ -173,8 +183,7 @@ export function Hud() {
           disabled={streaming}
           onChange={setInstructions}
           onSubmit={analyze}
-          onFollowUp={followUp}
-          canFollowUp={hasThread}
+          continuing={dialogTurns > 0}
         />
       </div>
     </div>

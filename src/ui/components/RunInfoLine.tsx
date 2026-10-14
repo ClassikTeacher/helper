@@ -6,7 +6,7 @@ interface RunInfoLineProps {
 
 /**
  * Presentational: one small line under the answer (R9/R19) — which model
- * answered, tokens and cost. Two states are highlighted because they silently
+ * answered, tokens (with prompt-cache hits) and cost. Two states are highlighted because they silently
  * change what the user got: an answer from a FALLBACK model (failover, possibly
  * weaker), and a `length` finish (the provider cut the answer short).
  */
@@ -18,6 +18,8 @@ export function RunInfoLine({ info }: RunInfoLineProps) {
   if (info.inputTokens !== undefined && info.outputTokens !== undefined) {
     parts.push(`${info.inputTokens}→${info.outputTokens} tok`);
   }
+  // Prompt-cache hits: the dialog's earlier messages re-read at a fraction of the price.
+  if (info.cachedTokens) parts.push(`кэш ${info.cachedTokens}`);
   if (info.cost !== undefined) parts.push(formatCost(info.cost));
 
   return (

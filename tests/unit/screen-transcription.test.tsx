@@ -1,6 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { AgentRunner } from '@/core/application/services/agent-runner';
 import {
   ScreenTranscriber,
@@ -8,14 +6,11 @@ import {
 } from '@/core/application/services/screen-transcriber';
 import { buildAgentPrompt } from '@/core/application/services/agent-prompt';
 import { AnalyzeScreenshotUseCase } from '@/core/application/use-cases/analyze-screenshot.use-case';
-import { analyzeAndStream, MAX_THREAD_TURNS } from '@/bootstrap/analyze-and-stream';
-import { runFollowUp } from '@/bootstrap/send-batch';
 import { buildTranscriberConfig } from '@/bootstrap/model-chain';
 import { stopRun } from '@/bootstrap/run-control';
 import { FakeScreenCaptureAdapter } from '@/infrastructure/mocks/fake-screen-capture.adapter';
 import { AGENTS } from '@/core/domain/agents-catalog';
 import { useHudStore } from '@/ui/store/hud.store';
-import { PromptInput } from '@/ui/components/PromptInput';
 import type { LlmChunk, LlmPort, LlmStreamRequest } from '@/core/application/ports/llm.port';
 import type { AppContainer } from '@/bootstrap/container.types';
 
@@ -126,84 +121,6 @@ describe('AgentRunner with the transcription pass', () => {
   });
 });
 
-describe('AgentRunner.followUp (P1 item 9)', () => {
-  it('sends the thread as text turns and the question last — no images', async () => {
-    const llm = scriptedLlm('shorter answer');
-    const runner = new AgentRunner({ screenCapture: new FakeScreenCaptureAdapter(), llm });
-
-    await drain(
-      runner.followUp({
-        agent: AGENTS.solver,
-        history: [{ userText: 'task text', answer: 'first answer' }],
-        question: 'а без доп. памяти?',
-      }),
-    );
-
-    const req = llm.requests[0]!;
-    expect(req.route).toBe('light');
-    expect(req.messages.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
-    expect(req.messages.flatMap((m) => m.parts).some((p) => p.kind === 'image')).toBe(false);
-    expect(userTextOf({ ...req, messages: [req.messages[3]!] })).toContain(
-      '<follow_up>\nа без доп. памяти?\n</follow_up>',
-    );
-  });
-});
-
-describe('follow-up threads in the HUD flow', () => {
-  function useCasesWith(llm: LlmPort): AppContainer['useCases'] {
-    return {
-      analyzeScreenshot: new AnalyzeScreenshotUseCase(
-        new AgentRunner({ screenCapture: new FakeScreenCaptureAdapter(), llm }),
-      ),
-    } as AppContainer['useCases'];
-  }
-
-  beforeEach(() => {
-    stopRun();
-    useHudStore.getState().reset();
-    useHudStore.setState({ instructions: '' });
-  });
-
-  it('an analysis starts a thread; a follow-up extends it and clears the question', async () => {
-    const llm = scriptedLlm('answer 1', 'answer 2');
-    const useCases = useCasesWith(llm);
-    await analyzeAndStream(useCases, { agent: AGENTS.solver, language: 'all', instructions: '', screenshots: [SHOT] });
-    expect(useHudStore.getState().thread?.turns).toHaveLength(1);
-
-    useHudStore.setState({ instructions: 'а за O(1) памяти?' });
-    await runFollowUp(useCases);
-
-    const state = useHudStore.getState();
-    expect(state.answer).toBe('answer 2');
-    expect(state.thread?.turns.map((t) => t.answer)).toEqual(['answer 1', 'answer 2']);
-    expect(state.instructions).toBe('');
-    expect(state.activeHint).toBe('↳ а за O(1) памяти?');
-    // The follow-up request carried the first exchange.
-    expect(llm.requests[1]!.messages.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
-  });
-
-  it('keeps the first turn (the task) and the latest ones when the thread grows', async () => {
-    const llm = scriptedLlm(...Array.from({ length: 10 }, (_, i) => `a${i}`));
-    const useCases = useCasesWith(llm);
-    await analyzeAndStream(useCases, { agent: AGENTS.solver, language: 'all', instructions: '', screenshots: [SHOT] });
-    for (let i = 0; i < 5; i++) {
-      useHudStore.setState({ instructions: `q${i}` });
-      await runFollowUp(useCases);
-    }
-    const answers = useHudStore.getState().thread!.turns.map((t) => t.answer);
-    expect(answers).toHaveLength(MAX_THREAD_TURNS);
-    expect(answers[0]).toBe('a0');
-    expect(answers.at(-1)).toBe('a5');
-  });
-
-  it('a follow-up without a thread or without a question does nothing', async () => {
-    const llm = scriptedLlm();
-    useHudStore.setState({ instructions: 'q' });
-    await runFollowUp(useCasesWith(llm));
-    expect(llm.requests).toHaveLength(0);
-  });
-});
-
 describe('buildTranscriberConfig', () => {
   afterEach(() => vi.unstubAllEnvs());
 
@@ -220,24 +137,7 @@ describe('buildTranscriberConfig', () => {
   });
 });
 
-describe('PromptInput follow-up button', () => {
-  it('appears with a thread and needs a question', async () => {
-    const onFollowUp = vi.fn();
-    const { rerender } = render(
-      <PromptInput value="" onChange={() => {}} onSubmit={() => {}} onFollowUp={onFollowUp} canFollowUp />,
-    );
-    expect(screen.getByRole('button', { name: '↳ Уточнить' })).toBeDisabled();
-
-    rerender(<PromptInput value="why?" onChange={() => {}} onSubmit={() => {}} onFollowUp={onFollowUp} canFollowUp />);
-    await userEvent.click(screen.getByRole('button', { name: '↳ Уточнить' }));
-    expect(onFollowUp).toHaveBeenCalled();
-
-    rerender(<PromptInput value="x" onChange={() => {}} onSubmit={() => {}} />);
-    expect(screen.queryByRole('button', { name: '↳ Уточнить' })).not.toBeInTheDocument();
-  });
-});
-
-describe('review regressions (P1 follow-ups / transcription)', () => {
+describe('review regressions (P1 transcription)', () => {
   function useCasesWith(llm: LlmPort, extra: Partial<AppContainer['useCases']> = {}): AppContainer['useCases'] {
     return {
       analyzeScreenshot: new AnalyzeScreenshotUseCase(
@@ -251,22 +151,6 @@ describe('review regressions (P1 follow-ups / transcription)', () => {
     stopRun();
     useHudStore.getState().reset();
     useHudStore.setState({ instructions: '' });
-  });
-
-  it('a new analysis drops the old thread as soon as it starts, even if it then fails', async () => {
-    const ok = scriptedLlm('answer A');
-    await analyzeAndStream(useCasesWith(ok), { agent: AGENTS.solver, language: 'all', instructions: '', screenshots: [SHOT] });
-    expect(useHudStore.getState().thread).not.toBeNull();
-
-    const failing: LlmPort = {
-      async *stream() {
-        yield { type: 'error', message: 'boom', retryable: false };
-      },
-    };
-    await analyzeAndStream(useCasesWith(failing), { agent: AGENTS.solver, language: 'all', instructions: '', screenshots: [SHOT] });
-
-    expect(useHudStore.getState().error).toBe('boom');
-    expect(useHudStore.getState().thread).toBeNull();
   });
 
   it('a failing transcription pass degrades to screenshots only instead of failing the run', async () => {
@@ -319,28 +203,5 @@ describe('review regressions (P1 follow-ups / transcription)', () => {
     expect(audio.stopRecording).toHaveBeenCalledTimes(1);
     expect(audio.transcribe).toHaveBeenCalledTimes(1);
     expect(userTextOf(llm.requests[0])).toContain('<transcript>\nthe question\n</transcript>');
-  });
-
-  it('follow-ups re-attach the screenshots only when the task existed solely as pixels', async () => {
-    const llm = scriptedLlm('A', 'B', 'C', 'D');
-    const useCases = useCasesWith(llm);
-    const imagesIn = (i: number) =>
-      llm.requests[i]!.messages.flatMap((m) => m.parts).filter((p) => p.kind === 'image').length;
-
-    await analyzeAndStream(useCases, { agent: AGENTS.solver, language: 'all', instructions: '', screenshots: [SHOT] });
-    useHudStore.setState({ instructions: 'q' });
-    await runFollowUp(useCases);
-    expect(imagesIn(1)).toBe(1);
-
-    await analyzeAndStream(useCases, {
-      agent: AGENTS.solver,
-      language: 'all',
-      instructions: '',
-      screenshots: [SHOT],
-      codeText: 'task as text',
-    });
-    useHudStore.setState({ instructions: 'q' });
-    await runFollowUp(useCases);
-    expect(imagesIn(3)).toBe(0);
   });
 });

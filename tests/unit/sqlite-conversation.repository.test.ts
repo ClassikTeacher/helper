@@ -61,4 +61,21 @@ describe('SqliteConversationRepository', () => {
     expect(found?.title).toBe('Updated');
     expect(found?.messages).toHaveLength(2); // ON CONFLICT DO NOTHING on messages
   });
+
+  it('appends the messages of a later save to the same conversation (one dialog)', async () => {
+    await repo.save(conversation());
+    await repo.save({
+      id: 'c1',
+      title: 'Title',
+      createdAt: 2000,
+      messages: [
+        { id: 'c1-m3', conversationId: 'c1', role: 'user', content: 'more', createdAt: 2000 },
+        { id: 'c1-m4', conversationId: 'c1', role: 'assistant', content: 'sure', createdAt: 2001 },
+      ],
+    });
+
+    const found = await repo.findById('c1');
+    expect(found?.createdAt).toBe(1000);
+    expect(found?.messages.map((m) => m.content)).toEqual(['hi', 'hello', 'more', 'sure']);
+  });
 });

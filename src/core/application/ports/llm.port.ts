@@ -14,6 +14,14 @@ export type LlmContentPart = LlmTextPart | LlmImagePart;
 export interface LlmMessage {
   readonly role: 'system' | 'user' | 'assistant';
   readonly parts: readonly LlmContentPart[];
+  /**
+   * Prompt-cache breakpoint: the request prefix up to and including this
+   * message may be cached by the provider, so the next message of the same
+   * dialog re-reads it at a fraction of the price. Native emits it only for
+   * providers that need an explicit marker (Anthropic); others cache prefixes
+   * automatically or ignore it.
+   */
+  readonly cache?: boolean;
 }
 
 export interface LlmStreamRequest {
@@ -50,6 +58,8 @@ export interface LlmUsage {
   readonly outputTokens: number;
   /** Request cost in USD (OpenRouter `usage.cost`), when reported. */
   readonly cost?: number;
+  /** Input tokens read from the provider's prompt cache, when reported. */
+  readonly cachedTokens?: number;
 }
 
 /** Incremental text token(s). */

@@ -1,11 +1,15 @@
-import { useHudStore, type RunInfo } from '@/ui/store/hud.store';
+import { useHudStore, type Dialog, type RunInfo } from '@/ui/store/hud.store';
 import { summarizeInvocation } from '@/core/application/services/agent-prompt';
+import {
+  compactHistory,
+  type ConversationTurn,
+  type SentPrompt,
+} from '@/core/application/services/conversation-history';
 import type { AppContainer } from './container.types';
-import type { Agent } from '@/core/domain/agent';
+import type { Agent, AgentId } from '@/core/domain/agent';
 import type { ProgrammingLanguage } from '@/core/domain/language';
 import type { Screenshot } from '@/core/domain/screenshot';
 import type { LlmFinish } from '@/core/application/ports/llm.port';
-import type { ConversationTurn } from '@/core/application/services/agent-runner';
 import { abortReason, beginRun, endRun } from './run-control';
 
 export interface AnalyzeAndStreamParams {
@@ -24,9 +28,6 @@ export interface AnalyzeAndStreamParams {
 type RunUseCases = Pick<AppContainer['useCases'], 'analyzeScreenshot'> &
   Partial<Pick<AppContainer['useCases'], 'recordConversation' | 'transcribeAudio'>>;
 
-/** Keeps a follow-up thread bounded: the first turn (the task) + the latest ones. */
-export const MAX_THREAD_TURNS = 4;
-
 /**
  * Drives `AnalyzeScreenshotUseCase` and pipes its streamed deltas into the HUD
  * store. Deliberately a plain function, not a React hook — the hotkey wiring
@@ -36,15 +37,17 @@ export const MAX_THREAD_TURNS = 4;
  * Zustand store via `getState()` works the same inside or outside React, so
  * both callers share one implementation instead of two copies drifting apart.
  *
- * A successful analysis starts a NEW follow-up thread (P1 item 9).
+ * The message continues the CURRENT dialog of its mode: the dialog so far is
+ * replayed as context, and a successful answer is appended to it. A stopped or
+ * failed run leaves the dialog as it was.
  */
 export async function analyzeAndStream(useCases: RunUseCases, params: AnalyzeAndStreamParams): Promise<void> {
-  let prompt: ConversationTurn = { userText: '', answer: '' };
+  const history = useHudStore.getState().dialogs[params.agent.id]?.turns ?? [];
+  let sent: SentPrompt = { userText: '' };
+  const summary = summarizeInvocation(params);
   await streamRun(useCases, {
+    agentId: params.agent.id,
     hint: params.instructions.trim(),
-    // A new analysis is a new task: the old thread must not survive a stopped
-    // or failed run (a follow-up would then ask about the previous task).
-    onStart: () => useHudStore.getState().setThread(null),
     // If loopback recording is active (phase 9), stop it and transcribe BEFORE
     // streaming so the "transcribing…" spinner shows first and the transcript
     // rides along in the same request as the screenshots. An STT failure throws
@@ -54,14 +57,16 @@ export async function analyzeAndStream(useCases: RunUseCases, params: AnalyzeAnd
       useCases.analyzeScreenshot.execute({
         ...params,
         transcript,
+        history,
         ...hooks,
-        onPrompt: (sent) => {
-          prompt = { ...sent, answer: '' };
+        onPrompt: (prompt) => {
+          sent = prompt;
         },
         onStatus: (status) => useHudStore.getState().setPhase(status),
       }),
-    summary: summarizeInvocation(params),
-    onSuccess: (answer) => {
+    summary,
+    turn: (answer) => ({ ...sent, answer }),
+    onSuccess: () => {
       // Clear the live inputs only now that they have been successfully
       // applied, so neither the hint nor the pasted code silently sticks to
       // the NEXT batch (user decision 2026-07-04; R15). A FAILED run keeps
@@ -72,59 +77,63 @@ export async function analyzeAndStream(useCases: RunUseCases, params: AnalyzeAnd
       if (useHudStore.getState().codeText === (params.codeText ?? '')) {
         useHudStore.getState().setCodeText('');
       }
-      useHudStore.getState().setThread({ agentId: params.agent.id, turns: [{ ...prompt, answer }] });
     },
   });
 }
 
 /**
- * Asks a follow-up question on the current thread (P1 item 9) and streams the
- * answer the same way as an analysis (one active run, Stop, run info). The
- * question comes from the input box; the thread grows by one turn.
+ * Sends a typed message with nothing attached (no screenshots, code, or audio)
+ * into the current dialog of its mode — a follow-up on an earlier answer or a
+ * standalone question — and streams the answer the same way as an analysis
+ * (one active run, Stop, run info).
  */
-export async function followUpAndStream(
+export async function askAndStream(
   useCases: RunUseCases,
-  params: { readonly agent: Agent; readonly question: string },
+  params: { readonly agent: Agent; readonly language: ProgrammingLanguage; readonly question: string },
 ): Promise<void> {
-  const thread = useHudStore.getState().thread;
   const question = params.question.trim();
-  if (!thread || !question) return;
-  let userText = '';
+  if (!question) return;
+  const history = useHudStore.getState().dialogs[params.agent.id]?.turns ?? [];
+  let sent: SentPrompt = { userText: '' };
   await streamRun(useCases, {
+    agentId: params.agent.id,
     hint: `↳ ${question}`,
     prepare: async () => '',
     source: (_transcript, hooks) =>
-      useCases.analyzeScreenshot.followUp({
+      useCases.analyzeScreenshot.ask({
         agent: params.agent,
-        history: thread.turns,
+        language: params.language,
+        history,
         question,
         ...hooks,
-        onPrompt: (sent) => {
-          userText = sent.userText;
+        onPrompt: (prompt) => {
+          sent = prompt;
         },
       }),
     summary: `${params.agent.name} ↳ ${question}`,
-    onSuccess: (answer) => {
-      useHudStore.getState().setInstructions('');
-      useHudStore.getState().setThread({
-        agentId: thread.agentId,
-        turns: boundThread([...thread.turns, { userText, answer }]),
-      });
-    },
+    turn: (answer) => ({ ...sent, answer }),
+    onSuccess: () => useHudStore.getState().setInstructions(''),
   });
 }
 
-/** Keeps the first turn (it states the task) and the most recent ones. */
-function boundThread(turns: readonly ConversationTurn[]): ConversationTurn[] {
-  if (turns.length <= MAX_THREAD_TURNS) return [...turns];
-  return [turns[0]!, ...turns.slice(turns.length - (MAX_THREAD_TURNS - 1))];
+/**
+ * Appends a completed exchange to the agent's dialog (starting one if there is
+ * none) and keeps it bounded. Returns the dialog it was recorded under.
+ */
+function appendToDialog(agentId: AgentId, title: string, turn: ConversationTurn): Dialog {
+  const current = useHudStore.getState().dialogs[agentId];
+  const dialog: Dialog = current
+    ? { ...current, turns: compactHistory([...current.turns, turn]) }
+    : { id: crypto.randomUUID(), title, turns: [turn] };
+  useHudStore.getState().setDialog(agentId, dialog);
+  return dialog;
 }
 
 interface RunSpec {
+  /** The mode whose dialog this message belongs to. */
+  readonly agentId: AgentId;
   /** Shown in the HUD while the answer streams ("Hint" chip). */
   readonly hint: string;
-  /** Called right after streaming starts (e.g. an analysis drops the old thread). */
-  readonly onStart?: () => void;
   /** Work before streaming (e.g. STT); its result is handed to `source`. */
   readonly prepare: () => Promise<string>;
   readonly source: (
@@ -133,12 +142,16 @@ interface RunSpec {
   ) => AsyncIterable<string>;
   /** Stored as the conversation's prompt in history. */
   readonly summary: string;
-  readonly onSuccess: (answer: string) => void;
+  /** The dialog turn for this message, given the completed answer. */
+  readonly turn: (answer: string) => ConversationTurn;
+  /** Extra bookkeeping after a successful answer (e.g. clearing the inputs). */
+  readonly onSuccess: () => void;
 }
 
 /**
  * The shared run lifecycle: one active run (P0), stream into the HUD, report
- * run info (R9/R19), wind down on Stop/supersede, persist on success.
+ * run info (R9/R19), wind down on Stop/supersede; on success, append the
+ * exchange to the mode's dialog and persist it.
  */
 async function streamRun(useCases: RunUseCases, spec: RunSpec): Promise<void> {
   // Exactly one active run (P0): starting this one aborts any run in flight.
@@ -148,7 +161,6 @@ async function streamRun(useCases: RunUseCases, spec: RunSpec): Promise<void> {
     if (signal.aborted) return settleAborted(signal);
 
     useHudStore.getState().startStreaming();
-    spec.onStart?.();
     // Display-only copy of what was applied to this run.
     useHudStore.getState().setActiveHint(spec.hint);
 
@@ -163,13 +175,14 @@ async function streamRun(useCases: RunUseCases, spec: RunSpec): Promise<void> {
     useHudStore.getState().finishStreaming();
 
     const answer = useHudStore.getState().answer;
-    spec.onSuccess(answer);
+    const dialog = appendToDialog(spec.agentId, spec.summary, spec.turn(answer));
+    spec.onSuccess();
 
-    // Persist the completed exchange (phase 4). Best-effort: a storage failure
-    // must NOT break the answer already streamed to the user.
+    // Persist the completed exchange under its dialog (phase 4). Best-effort:
+    // a storage failure must NOT break the answer already streamed to the user.
     if (useCases.recordConversation && answer.trim()) {
       await useCases.recordConversation
-        .execute({ prompt: spec.summary, answer })
+        .execute({ prompt: spec.summary, answer, conversationId: dialog.id, title: dialog.title })
         .catch((err) => console.error('Failed to persist conversation', err));
     }
   } catch (err) {
@@ -190,6 +203,7 @@ function toRunInfo(finish: LlmFinish): RunInfo {
           inputTokens: finish.usage.inputTokens,
           outputTokens: finish.usage.outputTokens,
           ...(finish.usage.cost !== undefined ? { cost: finish.usage.cost } : {}),
+          ...(finish.usage.cachedTokens ? { cachedTokens: finish.usage.cachedTokens } : {}),
         }
       : {}),
   };

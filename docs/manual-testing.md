@@ -62,10 +62,20 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 - [ ] **Recording window:** record > 60 s (`AI_HELPER_MAX_RECORDING_SECS` to shorten) — the HUD clock keeps running and shows "в запрос уйдут последние N с"; the transcript contains the END of the speech, not the beginning
 - [ ] **Multi-monitor:** with the mouse on the second monitor, the capture hotkey captures THAT monitor
 - [ ] **STT vocabulary:** say "горутина", "мьютекс", "Kafka", "JOIN" — they come out spelled as terms; `AI_HELPER_STT_PROMPT=off` / `AI_HELPER_STT_LANGUAGE=auto` still transcribe
-- [ ] **Follow-up:** after an answer, type "а без доп. памяти?" and press "↳ Уточнить" — the answer addresses the same task; a new analysis (SEND) starts a new thread
+- [ ] **Follow-up:** replaced by dialogs — see "Dialogs (2026-10)" below
 - [ ] **Screen transcription:** with `VITE_AUTO_TRANSCRIBE=reviewer`, a Review shows "распознаю код…" first; with a bogus `VITE_TRANSCRIBE_MODEL` the review still arrives (screenshots only)
 - [ ] **Code blocks:** answers show highlighted code with a "копировать" button; pasting after it gives the exact code
 - [ ] `pnpm models:check` passes for the configured chains
+
+### Dialogs (2026-10)
+- [ ] **Dialog continues:** Solve a task from a screenshot, then type "а без доп. памяти?" and press Run (or SEND) with nothing staged — the answer addresses the same task; the bar above the answer shows "В контексте: 2 вопроса"
+- [ ] **Unrelated question in the same dialog:** then capture a DIFFERENT task and SEND — the answer solves the new task from scratch (no code or constraints from the first one)
+- [ ] **Typed first message:** in a new dialog, type a theory question with no screenshot and press Run — it is answered (no "Нет данных" error)
+- [ ] **Modes are independent:** ask in Solve, switch to Review and ask there, switch back — Solve shows its own last answer, and its next message still has the Solve context (Review's counter is separate)
+- [ ] **New dialog:** "＋ Новый диалог" in Solve clears the Solve answer and context ("Новый диалог"); Review keeps its dialog and answer
+- [ ] **Restart:** after restarting the app both modes start with "Новый диалог"
+- [ ] **Prompt cache:** with an Anthropic primary model, the run-info line of the 2nd+ message in a dialog shows "кэш N" (needs the prompt over the model's caching minimum, e.g. a few screenshots); the OpenRouter activity log shows the cache read
+- [ ] **History:** the SQLite `messages` of one dialog share one `conversation_id`
 
 ### Phase 4 — Context
 - [ ] History persists across app restarts

@@ -414,7 +414,7 @@ describe('registerHotkeys', () => {
     hotkey.press(SEND_ACCELERATOR);
     await flush();
 
-    expect(useHudStore.getState().error).toContain('Нет данных для анализа');
+    expect(useHudStore.getState().error).toContain('Нет данных для отправки');
     expect(analyzeSpy).not.toHaveBeenCalled();
     // The HUD is shown so the user sees the error.
     expect(overlay.show).toHaveBeenCalled();

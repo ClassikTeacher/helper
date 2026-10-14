@@ -8,6 +8,13 @@ const TITLE_MAX = 60;
 export interface RecordConversationParams {
   readonly prompt: string;
   readonly answer: string;
+  /**
+   * The dialog this exchange belongs to: its messages are appended to that
+   * conversation. Omitted = a new conversation of its own.
+   */
+  readonly conversationId?: string;
+  /** Conversation title; defaults to the prompt. Pass the dialog's first prompt to keep it stable. */
+  readonly title?: string;
 }
 
 /** Injectable clock/id source so the use-case is deterministic in tests. */
@@ -17,9 +24,11 @@ export interface RecordConversationDeps {
 }
 
 /**
- * Use-case: persist a completed prompt→answer exchange as a conversation
- * (two messages: the user's prompt and the assistant's answer). Each exchange
- * is its own conversation for now — threading/continuation is a later concern.
+ * Use-case: persist a completed prompt→answer exchange (two messages: the
+ * user's prompt and the assistant's answer). With a `conversationId` the
+ * messages are appended to that dialog's conversation (the repository upserts
+ * the conversation row and inserts the new messages); without one, the
+ * exchange becomes a conversation of its own.
  */
 export class RecordConversationUseCase {
   private readonly newId: () => string;
@@ -35,11 +44,11 @@ export class RecordConversationUseCase {
 
   async execute(params: RecordConversationParams): Promise<void> {
     const createdAt = this.now();
-    const conversationId = this.newId();
+    const conversationId = params.conversationId ?? this.newId();
 
     const conversation: Conversation = {
       id: conversationId,
-      title: toTitle(params.prompt),
+      title: toTitle(params.title ?? params.prompt),
       createdAt,
       messages: [
         createMessage({
