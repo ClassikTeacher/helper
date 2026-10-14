@@ -63,6 +63,7 @@ export async function analyzeAndStream(useCases: RunUseCases, params: AnalyzeAnd
           sent = prompt;
         },
         onStatus: (status) => useHudStore.getState().setPhase(status),
+        onNotice: (notice) => useHudStore.getState().setNotice(notice),
       }),
     summary,
     turn: (answer) => ({ ...sent, answer }),

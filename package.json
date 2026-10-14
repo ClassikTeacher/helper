@@ -16,7 +16,8 @@
     "lint": "eslint .",
     "eval": "vitest run --config vitest.eval.config.ts",
     "eval:shots": "node eval/render-shots.mjs",
-    "models:check": "node eval/check-models.mjs"
+    "models:check": "node eval/check-models.mjs",
+    "ocr:fetch": "node scripts/fetch-ocr.mjs"
   },
   "dependencies": {
     "@openrouter/ai-sdk-provider": "^0.4.5",

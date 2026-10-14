@@ -4,7 +4,7 @@ version = "0.0.0"
 description = "Desktop AI screen-assistant"
 authors = ["Konstantin Fedetsov"]
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.92"
 
 # The library exposes the composition root + modules so they are unit-testable.
 [lib]
@@ -29,7 +29,12 @@ base64 = "0.22"
 # --- Added per phase (kept out until needed, see tasks.md) ---
 scap = "0.1.0-beta.1"    # spike 0.5 / phase 1: screen capture (Win/Linux) — patched, see vendor/scap/NOTES.md
 png = "0.17"             # phase 1: encode captured BGRA frames to PNG for the IPC seam (CaptureResult.imageBase64)
-# ort = "2"               # phase 6: ONNX Runtime for local OCR
+# ort (phase 6): ONNX Runtime for local OCR (PP-OCR det + rec). `load-dynamic`:
+# onnxruntime.dll is loaded at runtime from the OCR model folder (fetched by
+# `pnpm ocr:fetch`, not linked or downloaded at build time), so the app builds
+# and runs without it — OCR just reports itself unavailable. `api-20`: works
+# with any ONNX Runtime >= 1.20 (the fetch script pins 1.31).
+ort = { version = "=2.0.0-rc.14", default-features = false, features = ["std", "load-dynamic", "api-20"] }
 
 # keyring (phase 2): real OS credential store, replacing the phase-0 in-memory
 # SecretStore stub. `windows-native` is the only backend enabled so far
@@ -68,6 +73,10 @@ path = "examples/spike_scap.rs"
 [[example]]
 name = "spike_llm_stream"
 path = "examples/spike_llm_stream.rs"
+
+[[example]]
+name = "ocr_check"
+path = "examples/ocr_check.rs"
 
 [[example]]
 name = "spike_audio_loopback"

@@ -7,8 +7,22 @@ pub trait ScreenCapturer: Send + Sync {
     fn capture(&self, request: &CaptureRequest) -> Result<CaptureResult, String>;
 }
 
+/// Whether the local OCR is installed (phase 6) — from the files alone.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OcrStatus {
+    pub available: bool,
+    /// The optional Cyrillic recognition model is installed.
+    pub cyrillic: bool,
+    /// The OCR folder looked at.
+    pub dir: String,
+    /// What is missing, when not available.
+    pub detail: Option<String>,
+}
+
 pub trait OcrEngine: Send + Sync {
     fn recognize(&self, request: &OcrRequest) -> Result<OcrResult, String>;
+    /// Whether the engine can run (installed files) — cheap, loads nothing.
+    fn status(&self) -> OcrStatus;
 }
 
 pub trait SecretStore: Send + Sync {

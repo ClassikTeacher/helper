@@ -3,6 +3,7 @@ import type { CaptureScreenshotUseCase } from '@/core/application/use-cases/capt
 import type { SendPromptUseCase } from '@/core/application/use-cases/send-prompt.use-case';
 import type { ManageApiKeyUseCase } from '@/core/application/use-cases/manage-api-key.use-case';
 import type { RecordConversationUseCase } from '@/core/application/use-cases/record-conversation.use-case';
+import type { OcrPort } from '@/core/application/ports/ocr.port';
 import type { TranscribeAudioUseCase } from '@/core/application/use-cases/transcribe-audio.use-case';
 import type { AudioTranscriptionPort } from '@/core/application/ports/audio-transcription.port';
 import type { OverlayPort } from '@/core/application/ports/overlay.port';
@@ -52,4 +53,5 @@ export interface ContainerOverrides {
   readonly conversationRepository?: ConversationRepository;
   readonly audio?: AudioTranscriptionPort;
   readonly clipboard?: ClipboardPort;
+  readonly ocr?: OcrPort;
 }

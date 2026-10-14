@@ -8,6 +8,8 @@ pub mod infra;
 pub mod ports;
 pub mod services;
 
+use std::sync::Arc;
+
 use tauri::Manager;
 
 use infra::openrouter_client::OpenRouterClient;
@@ -19,7 +21,8 @@ use services::capture_service::CaptureService;
 /// Application state injected into command handlers via `tauri::State`.
 pub struct AppState {
     pub capture: CaptureService,
-    pub ocr: Box<dyn OcrEngine>,
+    /// `Arc` so `ocr_image` can run it on a blocking thread (it takes ~1 s).
+    pub ocr: Arc<dyn OcrEngine>,
     pub secrets: Box<dyn SecretStore>,
     /// No trait/fake here (unlike `ocr`/`secrets`): `OpenRouterClient`'s HTTP
     /// call has nothing worth faking behind a trait — its actual logic (SSE
@@ -43,7 +46,7 @@ impl AppState {
     fn build_default() -> Self {
         AppState {
             capture: CaptureService::new(Box::new(infra::scap_capturer::ScapCapturer::new())),
-            ocr: Box::new(infra::ort_ocr::OrtOcr::new()),
+            ocr: Arc::new(infra::ort_ocr::OrtOcr::new()),
             secrets: Box::new(infra::keyring_secrets::KeyringSecrets::new()),
             llm: OpenRouterClient::new(),
             llm_cancels: infra::llm_cancel::CancelRegistry::new(),

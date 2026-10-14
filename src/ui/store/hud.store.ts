@@ -50,6 +50,7 @@ export interface Dialog {
  */
 interface AgentView {
   readonly answer: string;
+  readonly notice: string | null;
   readonly error: string | null;
   readonly stopped: boolean;
   readonly lastRun: RunInfo | null;
@@ -59,6 +60,7 @@ interface AgentView {
 
 const EMPTY_VIEW: AgentView = {
   answer: '',
+  notice: null,
   error: null,
   stopped: false,
   lastRun: null,
@@ -134,6 +136,8 @@ interface HudState {
   readonly views: Readonly<Partial<Record<AgentId, AgentView>>>;
   /** Progress before the first token (e.g. reading the screen); null otherwise. */
   readonly phase: RunStatus | null;
+  /** A caveat about the current answer (e.g. the OCR pass failed); null when none. */
+  readonly notice: string | null;
 
   open(): void;
   close(): void;
@@ -175,6 +179,7 @@ interface HudState {
   /** Start a new dialog in the CURRENT mode: its context and answer area are cleared. */
   newDialog(): void;
   setPhase(phase: RunStatus | null): void;
+  setNotice(notice: string | null): void;
   reset(): void;
 }
 
@@ -200,6 +205,7 @@ export const useHudStore = create<HudState>((set) => ({
   dialogs: NO_DIALOGS,
   views: {},
   phase: null,
+  notice: null,
 
   open: () => set({ visible: true }),
   close: () => set({ visible: false }),
@@ -212,6 +218,7 @@ export const useHudStore = create<HudState>((set) => ({
       lastRun: null,
       stopped: false,
       phase: null,
+      notice: null,
     }),
   appendAnswer: (delta) => set((s) => ({ answer: s.answer + delta, phase: null })),
   finishStreaming: () => set({ streaming: false, phase: null }),
@@ -246,6 +253,7 @@ export const useHudStore = create<HudState>((set) => ({
       if (agentId === s.agentId) return s;
       const leaving: AgentView = {
         answer: s.answer,
+        notice: s.notice,
         error: s.error,
         stopped: s.stopped,
         lastRun: s.lastRun,
@@ -271,6 +279,7 @@ export const useHudStore = create<HudState>((set) => ({
   newDialog: () =>
     set((s) => ({ ...EMPTY_VIEW, dialogs: { ...s.dialogs, [s.agentId]: null } })),
   setPhase: (phase) => set({ phase }),
+  setNotice: (notice) => set({ notice }),
   reset: () =>
     set({
       streaming: false,
@@ -288,5 +297,6 @@ export const useHudStore = create<HudState>((set) => ({
       dialogs: NO_DIALOGS,
       views: {},
       phase: null,
+      notice: null,
     }),
 }));

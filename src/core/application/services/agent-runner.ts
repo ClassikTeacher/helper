@@ -10,15 +10,15 @@ import type { ProgrammingLanguage } from '@/core/domain/language';
 import type { Screenshot } from '@/core/domain/screenshot';
 import { buildAgentPrompt, buildQuestionText } from './agent-prompt';
 import { historyMessages, type ConversationTurn, type SentPrompt } from './conversation-history';
-import type { ScreenTranscriber } from './screen-transcriber';
+import type { ScreenReader } from './screen-transcriber';
 
 export type { ConversationTurn, SentPrompt } from './conversation-history';
 
 export interface AgentRunnerDeps {
   readonly screenCapture: ScreenCapturePort;
   readonly llm: LlmPort;
-  /** Optional screenshot → text pass (P1 item 7); applies per agent. */
-  readonly transcriber?: ScreenTranscriber;
+  /** Optional screenshot → text pass (P1 item 7 cloud / phase 6 local OCR); per agent. */
+  readonly transcriber?: ScreenReader;
 }
 
 /** Progress the UI may show before the first answer token. */
@@ -71,6 +71,8 @@ export interface AnalyzeScreenParams {
   readonly history?: readonly ConversationTurn[];
   /** Progress before streaming (e.g. the screen-transcription pass). */
   readonly onStatus?: (status: RunStatus) => void;
+  /** Something the user should know about this answer (e.g. the OCR pass failed). */
+  readonly onNotice?: (message: string) => void;
   readonly signal?: AbortSignal;
   /**
    * The staged screenshot batch to analyze as one unit (phase 8). The capture
@@ -121,8 +123,12 @@ export class AgentRunner {
       try {
         transcribed = await transcriber.transcribe(shots, params.signal);
       } catch (err) {
-        // Optional pass: a failure degrades to screenshots only, never to no answer.
+        // Optional pass: a failure degrades to screenshots only, never to no
+        // answer — but visibly, or a missing OCR install would go unnoticed.
         console.warn('Screen transcription failed; continuing with screenshots only', err);
+        params.onNotice?.(
+          `Код не распознан, ответ по скриншотам: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
       if (params.signal?.aborted) return;
     }
