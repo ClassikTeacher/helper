@@ -112,6 +112,35 @@ describe('TauriLlmAdapter', () => {
     ]);
   });
 
+  it('forwards the prompt-cache breakpoint and passes cached tokens through', async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      lastChannel!.emit({
+        type: 'finish',
+        reason: 'stop',
+        usage: { inputTokens: 5000, outputTokens: 7, cachedTokens: 4000 },
+      });
+    });
+
+    const chunks = await collect(
+      new TauriLlmAdapter().stream({
+        model: 'anthropic/claude-haiku-4.5',
+        messages: [
+          { role: 'system', parts: [{ kind: 'text', text: 'sys' }] },
+          { role: 'user', parts: [{ kind: 'text', text: 'hi' }], cache: true },
+        ],
+      }),
+    );
+
+    const request = (invoke as ReturnType<typeof vi.fn>).mock.calls[0]![1].request;
+    expect(request.messages).toEqual([
+      { role: 'system', parts: [{ kind: 'text', text: 'sys' }] },
+      { role: 'user', parts: [{ kind: 'text', text: 'hi' }], cache: true },
+    ]);
+    expect(chunks).toEqual([
+      { type: 'finish', reason: 'stop', usage: { inputTokens: 5000, outputTokens: 7, cachedTokens: 4000 } },
+    ]);
+  });
+
   it('on abort, stops yielding and asks native to cancel THIS request (P0)', async () => {
     (invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
       if (cmd === IPC_COMMANDS.llmStream) {

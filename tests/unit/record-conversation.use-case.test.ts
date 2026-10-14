@@ -34,4 +34,18 @@ describe('RecordConversationUseCase', () => {
     expect(convo?.title.length).toBeLessThanOrEqual(60);
     expect(convo?.title.endsWith('…')).toBe(true);
   });
+
+  it('appends to an existing dialog conversation, keeping its title', async () => {
+    const repo = new InMemoryConversationRepository();
+    let now = 1000;
+    const useCase = new RecordConversationUseCase(repo, { newId: seqIds(), now: () => now });
+
+    await useCase.execute({ prompt: 'Solver', answer: 'A1', conversationId: 'dlg', title: 'Solver' });
+    now = 2000;
+    await useCase.execute({ prompt: 'Solver ↳ why?', answer: 'A2', conversationId: 'dlg', title: 'Solver' });
+
+    const convo = await repo.findById('dlg');
+    expect(convo?.title).toBe('Solver');
+    expect(convo?.messages.map((m) => m.content)).toEqual(['Solver', 'A1', 'Solver ↳ why?', 'A2']);
+  });
 });

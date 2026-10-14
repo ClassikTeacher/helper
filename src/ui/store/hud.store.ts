@@ -27,7 +27,46 @@ export interface RunInfo {
   readonly outputTokens?: number;
   /** USD. */
   readonly cost?: number;
+  /** Input tokens served from the provider's prompt cache. */
+  readonly cachedTokens?: number;
 }
+
+/**
+ * A dialog of one mode: its messages so far, replayed as context for the next
+ * one. In memory only — every app start begins with empty dialogs.
+ */
+export interface Dialog {
+  /** Conversation id the dialog is persisted under (SQLite history). */
+  readonly id: string;
+  /** Human-readable title — the summary of the dialog's first message. */
+  readonly title: string;
+  /** Completed exchanges, oldest first, already compacted (`compactHistory`). */
+  readonly turns: readonly ConversationTurn[];
+}
+
+/**
+ * What the answer area of one mode shows. Saved when the user switches to the
+ * other mode and restored on the way back, so each mode keeps its own answer.
+ */
+interface AgentView {
+  readonly answer: string;
+  readonly error: string | null;
+  readonly stopped: boolean;
+  readonly lastRun: RunInfo | null;
+  readonly activeHint: string;
+  readonly transcript: string;
+}
+
+const EMPTY_VIEW: AgentView = {
+  answer: '',
+  error: null,
+  stopped: false,
+  lastRun: null,
+  activeHint: '',
+  transcript: '',
+};
+
+const NO_DIALOGS: Readonly<Record<AgentId, Dialog | null>> = { solver: null, reviewer: null };
 
 /**
  * UI-only state for the HUD (Zustand). No business logic, no domain data beyond
@@ -86,11 +125,13 @@ interface HudState {
   /** True when the current answer was stopped by the user (partial answer kept). */
   readonly stopped: boolean;
   /**
-   * The current conversation thread (P1 item 9): the last analysis and any
-   * follow-ups, as text, so a follow-up question can refer to them. A new
-   * analysis starts a new thread; null before the first answer.
+   * The current dialog of EACH mode (null = new, empty dialog). Modes are
+   * independent: every message continues its own mode's dialog, and "New
+   * dialog" resets only the current mode's.
    */
-  readonly thread: { readonly agentId: AgentId; readonly turns: readonly ConversationTurn[] } | null;
+  readonly dialogs: Readonly<Record<AgentId, Dialog | null>>;
+  /** The answer area of the modes NOT on screen (see `AgentView`). */
+  readonly views: Readonly<Partial<Record<AgentId, AgentView>>>;
   /** Progress before the first token (e.g. reading the screen); null otherwise. */
   readonly phase: RunStatus | null;
 
@@ -115,6 +156,7 @@ interface HudState {
   /** Empty the screenshot batch. */
   clearScreenshots(): void;
   setHotkeyError(message: string | null): void;
+  /** Switch the mode; its own answer area (as last left) comes back on screen. */
   setAgentId(agentId: AgentId): void;
   setLanguage(language: ProgrammingLanguage): void;
   setInstructions(instructions: string): void;
@@ -129,7 +171,9 @@ interface HudState {
   setTranscript(transcript: string): void;
   setCodeText(codeText: string): void;
   setLastRun(info: RunInfo | null): void;
-  setThread(thread: HudState['thread']): void;
+  setDialog(agentId: AgentId, dialog: Dialog | null): void;
+  /** Start a new dialog in the CURRENT mode: its context and answer area are cleared. */
+  newDialog(): void;
   setPhase(phase: RunStatus | null): void;
   reset(): void;
 }
@@ -153,7 +197,8 @@ export const useHudStore = create<HudState>((set) => ({
   codeText: '',
   lastRun: null,
   stopped: false,
-  thread: null,
+  dialogs: NO_DIALOGS,
+  views: {},
   phase: null,
 
   open: () => set({ visible: true }),
@@ -196,7 +241,20 @@ export const useHudStore = create<HudState>((set) => ({
     set((s) => ({ screenshots: s.screenshots.filter((_, i) => i !== index) })),
   clearScreenshots: () => set({ screenshots: [] }),
   setHotkeyError: (message) => set({ hotkeyError: message }),
-  setAgentId: (agentId) => set({ agentId }),
+  setAgentId: (agentId) =>
+    set((s) => {
+      if (agentId === s.agentId) return s;
+      const leaving: AgentView = {
+        answer: s.answer,
+        error: s.error,
+        stopped: s.stopped,
+        lastRun: s.lastRun,
+        activeHint: s.activeHint,
+        transcript: s.transcript,
+      };
+      const { [agentId]: arriving = EMPTY_VIEW, ...others } = s.views;
+      return { agentId, ...arriving, views: { ...others, [s.agentId]: leaving } };
+    }),
   setLanguage: (language) => set({ language }),
   setInstructions: (instructions) => set({ instructions }),
   setActiveHint: (hint) => set({ activeHint: hint }),
@@ -209,7 +267,9 @@ export const useHudStore = create<HudState>((set) => ({
   setTranscript: (transcript) => set({ transcript, transcribing: false }),
   setCodeText: (codeText) => set({ codeText }),
   setLastRun: (lastRun) => set({ lastRun }),
-  setThread: (thread) => set({ thread }),
+  setDialog: (agentId, dialog) => set((s) => ({ dialogs: { ...s.dialogs, [agentId]: dialog } })),
+  newDialog: () =>
+    set((s) => ({ ...EMPTY_VIEW, dialogs: { ...s.dialogs, [s.agentId]: null } })),
   setPhase: (phase) => set({ phase }),
   reset: () =>
     set({
@@ -225,7 +285,8 @@ export const useHudStore = create<HudState>((set) => ({
       codeText: '',
       lastRun: null,
       stopped: false,
-      thread: null,
+      dialogs: NO_DIALOGS,
+      views: {},
       phase: null,
     }),
 }));

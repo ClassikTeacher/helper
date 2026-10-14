@@ -32,6 +32,12 @@ export interface AgentInvocation {
   readonly codeTextSource?: 'user' | 'transcribed';
   /** How many screenshots accompany the text (0 = text-only request). Default 1. */
   readonly screenshotCount?: number;
+  /**
+   * True when earlier messages of the dialog precede this one: the text then
+   * opens with `CONTINUATION_NOTE`. False (the default) leaves the prompt of a
+   * dialog's first message unchanged — the one the prompt eval measures.
+   */
+  readonly continuing?: boolean;
 }
 
 export interface BuiltPrompt {
@@ -63,8 +69,11 @@ export function buildAgentPrompt({
   codeText,
   codeTextSource = 'user',
   screenshotCount = 1,
+  continuing = false,
 }: AgentInvocation): BuiltPrompt {
   const lines: string[] = [];
+
+  if (continuing) lines.push(CONTINUATION_NOTE);
 
   if (agent.requiresLanguage) {
     lines.push(
@@ -109,12 +118,22 @@ export function buildAgentPrompt({
   // scope — user decision 2026-07-04). Code, identifiers, and console output stay
   // in their original language; only the prose (explanations, review comments)
   // is Russian. The screenshot / instructions may be in Russian or English.
-  lines.push(
-    'Write your answer in Russian. Keep code, identifiers, and console/output text in their original language; all explanations, reasoning, and review comments must be in Russian.',
-  );
+  lines.push(ANSWER_LANGUAGE);
 
   return { system: agent.systemPrompt, userText: lines.join('\n') };
 }
+
+const ANSWER_LANGUAGE =
+  'Write your answer in Russian. Keep code, identifiers, and console/output text in their original language; all explanations, reasoning, and review comments must be in Russian.';
+
+/**
+ * Opens every message after the first one of a dialog. A dialog mixes related
+ * and unrelated questions (an interview jumps between tasks), so the model must
+ * decide per message whether the earlier context applies — and must not let an
+ * earlier task's code or constraints leak into a new one.
+ */
+export const CONTINUATION_NOTE =
+  'This message continues the conversation above. It is either a follow-up on an earlier task (a clarification, a change, a question about your answer) or a NEW, unrelated task. If it brings a different task, solve it from scratch: do not carry over code, conclusions, or constraints from earlier tasks. If it builds on an earlier answer, use that context and do not repeat what you already said.';
 
 /** The closing instruction, adapted to what the request actually carries. */
 function directive(screenshotCount: number, hasCode: boolean, transcribed: boolean): string {
@@ -136,17 +155,36 @@ function directive(screenshotCount: number, hasCode: boolean, transcribed: boole
 }
 
 /**
- * The user text of a follow-up question (P1 item 9), sent after the earlier
- * exchange. The follow-up is the app user's own request, so unlike the data
- * blocks it IS an instruction.
+ * The user text of a typed message with no screenshots, code, or audio — a
+ * follow-up on an earlier answer or a standalone question. It is the app
+ * user's own request, so unlike the data blocks it IS an instruction.
  */
-export function buildFollowUpText(question: string): string {
-  return [
-    'Follow-up from the app user about your previous answer (same task — see the first message of this conversation):',
-    block('follow_up', question.trim()),
-    'Answer exactly what is asked; do not repeat the whole previous answer. If the follow-up changes the task (a new constraint, another language), give the complete updated solution.',
-    'Write your answer in Russian. Keep code, identifiers, and console/output text in their original language; all explanations, reasoning, and review comments must be in Russian.',
-  ].join('\n');
+export function buildQuestionText({
+  agent,
+  language,
+  question,
+  continuing,
+}: {
+  readonly agent: Agent;
+  readonly language: ProgrammingLanguage;
+  readonly question: string;
+  /** Earlier messages of the dialog precede this one. */
+  readonly continuing: boolean;
+}): string {
+  const lines: string[] = [];
+  if (continuing) lines.push(CONTINUATION_NOTE);
+  if (agent.requiresLanguage && language !== 'all') {
+    lines.push(`Target programming language for any code: ${languageLabel(language)}.`);
+  }
+  lines.push('Message from the app user (follow it):');
+  lines.push(block('question', question.trim()));
+  lines.push(
+    continuing
+      ? 'Answer exactly what is asked; do not repeat earlier answers. If it changes an earlier task (a new constraint, another language), give the complete updated solution.'
+      : 'Answer exactly what is asked, following your role.',
+  );
+  lines.push(ANSWER_LANGUAGE);
+  return lines.join('\n');
 }
 
 /**

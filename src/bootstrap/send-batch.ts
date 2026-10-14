@@ -1,21 +1,25 @@
 import { useHudStore } from '@/ui/store/hud.store';
-import { analyzeAndStream, followUpAndStream } from './analyze-and-stream';
+import { analyzeAndStream, askAndStream } from './analyze-and-stream';
 import { resolveAgent } from '@/core/domain/agents-catalog';
 import type { AppContainer } from './container.types';
 
 /**
- * Send the staged screenshot batch (+ current agent/language/instructions, and
- * the loopback transcript if recording) for analysis and stream the answer —
- * the app's main scenario (plan.md §4). Platform-free: it only touches use-cases
- * and the store, so both bootstrap (hotkey) and UI (record button, via
- * use-cases only — architecture.md §8) can call it. `sendBatch` wraps this with
- * `overlay.show()` for the hotkey path.
+ * Send the next message of the current mode's dialog and stream the answer —
+ * the app's main scenario (plan.md §4). What is sent depends on what is staged:
+ * - screenshots and/or pasted code (R15) and/or an active recording → an
+ *   analysis of the batch (+ the current agent/language/instructions and the
+ *   loopback transcript). While recording, an empty batch is allowed — the
+ *   runner falls back to a single fresh capture, so an audio-only question
+ *   (voice + whatever is on screen now) still works;
+ * - nothing but typed text → a text message (a follow-up on an earlier answer
+ *   or a standalone question);
+ * - nothing at all → an error.
+ * Either way the dialog so far goes along as context.
  *
- * An empty send is only an error when there is NOTHING to send: no staged
- * shots, no pasted code (R15) AND no active recording. While recording, an
- * empty batch is allowed — the runner falls back to a single fresh capture so
- * an audio-only question (voice + whatever is on screen now) still works. With
- * pasted code and no shots, the request is text-only.
+ * Platform-free: it only touches use-cases and the store, so both bootstrap
+ * (hotkey) and UI (Run and record buttons, via use-cases only — architecture.md
+ * §8) can call it. `sendBatch` wraps this with `overlay.show()` for the hotkey
+ * path.
  */
 export async function runSend(useCases: AppContainer['useCases']): Promise<void> {
   const { screenshots, recording, transcribing, agentId, language, instructions, codeText } =
@@ -24,33 +28,27 @@ export async function runSend(useCases: AppContainer['useCases']): Promise<void>
   // audio is already being processed and would otherwise be lost (a send
   // DURING streaming is fine — it supersedes the running answer, see run-control).
   if (transcribing) return;
+  const agent = resolveAgent(agentId);
   if (screenshots.length === 0 && !recording && !codeText.trim()) {
+    if (instructions.trim()) {
+      await askAndStream(useCases, { agent, language, question: instructions });
+      return;
+    }
     useHudStore
       .getState()
       .fail(
-        'Нет данных для анализа — сделайте хотя бы один скриншот (хоткей захвата) или вставьте код текстом.',
+        'Нет данных для отправки — сделайте скриншот (хоткей захвата), вставьте код текстом или напишите вопрос.',
       );
     return;
   }
 
   await analyzeAndStream(useCases, {
-    agent: resolveAgent(agentId),
+    agent,
     language,
     instructions,
     screenshots,
     ...(codeText.trim() ? { codeText } : {}),
   });
-}
-
-/**
- * Ask a follow-up about the current answer (P1 item 9): the input box text is
- * the question, the current thread is the context. No-op without a thread or
- * a question, and while a previous send is still transcribing.
- */
-export async function runFollowUp(useCases: AppContainer['useCases']): Promise<void> {
-  const { thread, instructions, transcribing } = useHudStore.getState();
-  if (transcribing || !thread || !instructions.trim()) return;
-  await followUpAndStream(useCases, { agent: resolveAgent(thread.agentId), question: instructions });
 }
 
 /**

@@ -137,7 +137,11 @@ function toStreamRequestDto(request: LlmStreamRequest): LlmStreamRequestDto {
 }
 
 function toMessageDto(message: LlmMessage): LlmMessageDto {
-  return { role: message.role, parts: message.parts.map(toContentPartDto) };
+  return {
+    role: message.role,
+    parts: message.parts.map(toContentPartDto),
+    ...(message.cache ? { cache: true } : {}),
+  };
 }
 
 function toContentPartDto(part: LlmContentPart): LlmContentPartDto {

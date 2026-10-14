@@ -1,7 +1,7 @@
 import type {
   AgentRunner,
   AnalyzeScreenParams,
-  FollowUpParams,
+  AskParams,
 } from '@/core/application/services/agent-runner';
 
 /**
@@ -15,8 +15,8 @@ export class AnalyzeScreenshotUseCase {
     return this.runner.analyzeScreen(params);
   }
 
-  /** A follow-up question on the current thread (P1 item 9). */
-  followUp(params: FollowUpParams): AsyncIterable<string> {
-    return this.runner.followUp(params);
+  /** A typed message with nothing attached — a follow-up or a standalone question. */
+  ask(params: AskParams): AsyncIterable<string> {
+    return this.runner.ask(params);
   }
 }

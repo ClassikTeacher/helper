@@ -146,7 +146,11 @@ fn build_request_body(request: &LlmStreamRequest) -> Value {
         "model": request.model,
         "stream": true,
         "usage": { "include": true },
-        "messages": request.messages.iter().map(to_openai_message).collect::<Vec<_>>(),
+        "messages": request
+            .messages
+            .iter()
+            .map(|message| to_openai_message(message, &request.model))
+            .collect::<Vec<_>>(),
     });
     if let Some(temperature) = request.temperature {
         body["temperature"] = json!(temperature);
@@ -157,7 +161,7 @@ fn build_request_body(request: &LlmStreamRequest) -> Value {
     body
 }
 
-fn to_openai_message(message: &LlmMessage) -> Value {
+fn to_openai_message(message: &LlmMessage, model: &str) -> Value {
     // System messages carry a plain-string `content`, not an array of content
     // parts. The OpenAI-compatible array form is only reliably accepted for
     // user/assistant; some providers behind OpenRouter are stricter about the
@@ -171,10 +175,28 @@ fn to_openai_message(message: &LlmMessage) -> Value {
             "content": system_text(&message.parts),
         });
     }
+    let mut content = message.parts.iter().map(to_openai_content_part).collect::<Vec<_>>();
+    if message.cache && needs_explicit_cache_marker(model) {
+        // The breakpoint goes on the message's last TEXT part: OpenRouter
+        // documents `cache_control` on text parts, and the cached prefix still
+        // covers every part before it (images included).
+        if let Some(part) = content.iter_mut().rev().find(|part| part["type"] == "text") {
+            part["cache_control"] = json!({ "type": "ephemeral" });
+        }
+    }
     json!({
         "role": role_str(&message.role),
-        "content": message.parts.iter().map(to_openai_content_part).collect::<Vec<_>>(),
+        "content": content,
     })
+}
+
+/// Whether the model's provider caches prompts only behind an explicit
+/// `cache_control` breakpoint. Anthropic does (via OpenRouter); OpenAI and
+/// Gemini cache long prefixes automatically, and other providers would at best
+/// ignore the marker — so it is sent to Anthropic models only, never risking a
+/// 400 on a fallback model.
+fn needs_explicit_cache_marker(model: &str) -> bool {
+    model.starts_with("anthropic/")
 }
 
 /// Joins the text parts of a system message into a single string. System
@@ -409,6 +431,10 @@ fn parse_data_json(data: &str) -> SseOutcome {
             input_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as u32,
             output_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as u32,
             cost: u["cost"].as_f64(),
+            cached_tokens: u["prompt_tokens_details"]["cached_tokens"]
+                .as_u64()
+                .filter(|&n| n > 0)
+                .map(|n| n as u32),
         }),
         model: value["model"].as_str().map(str::to_string),
         error,
@@ -514,6 +540,7 @@ mod tests {
             input_tokens: input,
             output_tokens: output,
             cost,
+            cached_tokens: None,
         }
     }
 
@@ -548,6 +575,22 @@ mod tests {
                 ..SseData::default()
             })
         );
+    }
+
+    #[test]
+    fn parse_sse_event_extracts_cached_prompt_tokens() {
+        let event = r#"data: {"choices":[],"usage":{"prompt_tokens":5000,"completion_tokens":10,"prompt_tokens_details":{"cached_tokens":4096}}}"#;
+        let SseOutcome::Data(data) = parse_sse_event(event) else {
+            panic!("expected data");
+        };
+        assert_eq!(data.usage.unwrap().cached_tokens, Some(4096));
+
+        // Zero (a cache miss) reads as absent: nothing to show in the HUD.
+        let miss = r#"data: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"prompt_tokens_details":{"cached_tokens":0}}}"#;
+        let SseOutcome::Data(data) = parse_sse_event(miss) else {
+            panic!("expected data");
+        };
+        assert_eq!(data.usage.unwrap().cached_tokens, None);
     }
 
     #[test]
@@ -682,6 +725,7 @@ mod tests {
                         image_base64: "QUJD".to_string(),
                     },
                 ],
+                cache: false,
             }],
             temperature: None,
             reasoning_effort: None,
@@ -720,12 +764,14 @@ mod tests {
                     parts: vec![LlmContentPart::Text {
                         text: "You are a senior code reviewer.".to_string(),
                     }],
+                    cache: false,
                 },
                 LlmMessage {
                     role: LlmRole::User,
                     parts: vec![LlmContentPart::Text {
                         text: "review this".to_string(),
                     }],
+                    cache: false,
                 },
             ],
             temperature: None,
@@ -751,6 +797,7 @@ mod tests {
             messages: vec![LlmMessage {
                 role: LlmRole::User,
                 parts: vec![LlmContentPart::Text { text: "q".to_string() }],
+                cache: false,
             }],
             temperature: None,
             reasoning_effort: None,
@@ -779,5 +826,46 @@ mod tests {
         // The thinking is not streamed back to the HUD.
         assert_eq!(body["reasoning"]["exclude"], true);
         assert!(body.get("max_tokens").is_none());
+    }
+
+    fn dialog_request(model: &str) -> LlmStreamRequest {
+        let text = |t: &str| LlmContentPart::Text { text: t.to_string() };
+        let mut request = text_request();
+        request.model = model.to_string();
+        request.messages = vec![
+            LlmMessage { role: LlmRole::System, parts: vec![text("sys")], cache: false },
+            LlmMessage { role: LlmRole::User, parts: vec![text("q1")], cache: false },
+            LlmMessage { role: LlmRole::Assistant, parts: vec![text("a1")], cache: false },
+            LlmMessage {
+                role: LlmRole::User,
+                parts: vec![
+                    LlmContentPart::Image { image_base64: "QUJD".to_string() },
+                    text("q2"),
+                ],
+                cache: true,
+            },
+        ];
+        request
+    }
+
+    #[test]
+    fn build_request_body_marks_the_cache_breakpoint_for_anthropic_models() {
+        let body = build_request_body(&dialog_request("anthropic/claude-haiku-4.5"));
+        let last = &body["messages"][3]["content"];
+        // On the last text part; the image before it is still in the cached prefix.
+        assert_eq!(last[1]["cache_control"]["type"], "ephemeral");
+        assert!(last[0].get("cache_control").is_none());
+        // Unmarked messages carry no breakpoint.
+        assert!(body["messages"][1]["content"][0].get("cache_control").is_none());
+        assert_eq!(body["messages"][0]["content"], "sys");
+    }
+
+    #[test]
+    fn build_request_body_sends_no_cache_marker_to_other_providers() {
+        for model in ["google/gemini-3.1-flash-lite", "openai/gpt-4o-mini"] {
+            let body = build_request_body(&dialog_request(model));
+            let serialized = body.to_string();
+            assert!(!serialized.contains("cache_control"), "{model}: {serialized}");
+        }
     }
 }

@@ -95,6 +95,10 @@ pub enum LlmContentPart {
 pub struct LlmMessage {
     pub role: LlmRole,
     pub parts: Vec<LlmContentPart>,
+    /// Prompt-cache breakpoint after this message (dialog history, see
+    /// `LlmMessage.cache` in llm.port.ts). Absent on the wire = `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cache: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -136,6 +140,10 @@ pub struct LlmUsage {
     /// USD cost reported by OpenRouter (`usage.cost`), when present (R9).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost: Option<f64>,
+    /// Input tokens served from the provider's prompt cache
+    /// (`usage.prompt_tokens_details.cached_tokens`), when reported and non-zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<u32>,
 }
 
 /// Discriminated union streamed over `Channel<LlmChunk>`; terminal chunk is
@@ -253,6 +261,16 @@ mod tests {
     }
 
     #[test]
+    fn message_cache_flag_is_optional() {
+        let plain: LlmMessage =
+            serde_json::from_str(r#"{ "role": "user", "parts": [] }"#).unwrap();
+        assert!(!plain.cache);
+        let cached: LlmMessage =
+            serde_json::from_str(r#"{ "role": "user", "parts": [], "cache": true }"#).unwrap();
+        assert!(cached.cache);
+    }
+
+    #[test]
     fn request_profile_fields_are_optional_and_camel_case() {
         // Old webviews (no profile fields) must still deserialize.
         let bare: LlmStreamRequest =
@@ -279,6 +297,7 @@ mod tests {
                 input_tokens: 1,
                 output_tokens: 2,
                 cost: Some(0.5),
+                cached_tokens: Some(3),
             }),
             model: Some("anthropic/claude-haiku-4.5".to_string()),
         };
@@ -286,6 +305,7 @@ mod tests {
         assert_eq!(value["type"], "finish");
         assert_eq!(value["usage"]["inputTokens"], 1);
         assert_eq!(value["usage"]["cost"], 0.5);
+        assert_eq!(value["usage"]["cachedTokens"], 3);
         assert_eq!(value["model"], "anthropic/claude-haiku-4.5");
     }
 }

@@ -342,6 +342,7 @@ mod tests {
                     LlmContentPart::Image { image_base64: "not-a-png".to_string() },
                     LlmContentPart::Text { text: "t".to_string() },
                 ],
+                cache: false,
             }],
             temperature: None,
             reasoning_effort: None,

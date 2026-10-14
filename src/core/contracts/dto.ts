@@ -81,6 +81,8 @@ export type LlmContentPartDto = LlmTextPartDto | LlmImagePartDto;
 export interface LlmMessageDto {
   readonly role: 'system' | 'user' | 'assistant';
   readonly parts: readonly LlmContentPartDto[];
+  /** Prompt-cache breakpoint after this message; omitted = none. */
+  readonly cache?: boolean;
 }
 
 export interface LlmStreamRequestDto {
@@ -106,6 +108,8 @@ export interface LlmUsageDto {
   readonly outputTokens: number;
   /** USD cost reported by OpenRouter (`usage.cost`), when present. */
   readonly cost?: number;
+  /** Input tokens served from the prompt cache (`prompt_tokens_details.cached_tokens`). */
+  readonly cachedTokens?: number;
 }
 
 /** Discriminated union streamed over the Channel; terminal chunk is finish|error. */

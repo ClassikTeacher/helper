@@ -8,8 +8,11 @@ import type {
 import type { Agent } from '@/core/domain/agent';
 import type { ProgrammingLanguage } from '@/core/domain/language';
 import type { Screenshot } from '@/core/domain/screenshot';
-import { buildAgentPrompt, buildFollowUpText } from './agent-prompt';
+import { buildAgentPrompt, buildQuestionText } from './agent-prompt';
+import { historyMessages, type ConversationTurn, type SentPrompt } from './conversation-history';
 import type { ScreenTranscriber } from './screen-transcriber';
+
+export type { ConversationTurn, SentPrompt } from './conversation-history';
 
 export interface AgentRunnerDeps {
   readonly screenCapture: ScreenCapturePort;
@@ -21,27 +24,14 @@ export interface AgentRunnerDeps {
 /** Progress the UI may show before the first answer token. */
 export type RunStatus = 'reading-screen';
 
-/** One completed exchange, kept for follow-up questions (P1 item 9). */
-export interface ConversationTurn {
-  /** The user text actually sent (data blocks included). */
-  readonly userText: string;
-  /**
-   * Screenshots (base64) re-attached on follow-ups — ONLY when the task
-   * existed solely as pixels (no code text, no transcription); otherwise the
-   * text already carries it and the images would just cost tokens again.
-   */
-  readonly images?: readonly string[];
-  readonly answer: string;
-}
-
-/** What `onPrompt` reports: the user message a follow-up thread starts from. */
-export type SentPrompt = Omit<ConversationTurn, 'answer'>;
-
-export interface FollowUpParams {
+/** A typed message with no screenshots, code, or audio. */
+export interface AskParams {
   readonly agent: Agent;
-  /** Earlier exchanges of this session, oldest first. */
+  /** Language hint for the solver; ignored when the agent doesn't need one. */
+  readonly language: ProgrammingLanguage;
+  /** Earlier exchanges of this dialog, oldest first (already compacted). */
   readonly history: readonly ConversationTurn[];
-  /** The user's follow-up question. */
+  /** The user's message. */
   readonly question: string;
   readonly onPrompt?: (sent: SentPrompt) => void;
   readonly onFinish?: (finish: LlmFinish) => void;
@@ -72,8 +62,13 @@ export interface AnalyzeScreenParams {
    * only carries deltas.
    */
   readonly onFinish?: (finish: LlmFinish) => void;
-  /** Receives the user message that was sent — the start of a follow-up thread. */
+  /** Receives the user message as sent — it becomes this message's turn in the dialog. */
   readonly onPrompt?: (sent: SentPrompt) => void;
+  /**
+   * Earlier exchanges of this dialog, oldest first (already compacted — see
+   * `compactHistory`). Replayed before the new message; empty = a new dialog.
+   */
+  readonly history?: readonly ConversationTurn[];
   /** Progress before streaming (e.g. the screen-transcription pass). */
   readonly onStatus?: (status: RunStatus) => void;
   readonly signal?: AbortSignal;
@@ -104,6 +99,7 @@ export class AgentRunner {
 
   async *analyzeScreen(params: AnalyzeScreenParams): AsyncIterable<string> {
     const { screenCapture } = this.deps;
+    const history = params.history ?? [];
 
     // Analyze the staged batch; fall back to a single fresh capture when the
     // caller staged nothing (pre-phase-8 one-shot ergonomics — see the
@@ -142,6 +138,7 @@ export class AgentRunner {
           ? { codeText: transcribed, codeTextSource: 'transcribed' as const }
           : {}),
       screenshotCount: shots.length,
+      continuing: history.length > 0,
     });
     params.onPrompt?.({
       userText,
@@ -153,8 +150,11 @@ export class AgentRunner {
 
     const messages: LlmMessage[] = [
       { role: 'system', parts: [{ kind: 'text', text: system }] },
+      ...historyMessages(history),
       {
         role: 'user',
+        // Cache the whole prefix: the next message of this dialog replays it.
+        cache: true,
         // Images before text: the model attends best when the image(s) precede
         // the question (Anthropic vision guidance). Multiple shots are added in
         // capture order, so "screenshot 1..N" reads as one sequence, then the
@@ -171,28 +171,23 @@ export class AgentRunner {
   }
 
   /**
-   * A follow-up question on the current thread (P1 item 9): system prompt,
-   * then the earlier exchanges, then the question. Screenshots are re-attached
-   * only for a turn whose task existed solely as pixels (see
-   * `ConversationTurn.images`); otherwise the text turns carry the task.
+   * A typed message with nothing else attached: a follow-up on an earlier
+   * answer, or a standalone question. System prompt, then the dialog so far,
+   * then the message. Screenshots are replayed only with the turns that keep
+   * them (see `ConversationTurn.images`).
    */
-  async *followUp(params: FollowUpParams): AsyncIterable<string> {
-    const userText = buildFollowUpText(params.question);
+  async *ask(params: AskParams): AsyncIterable<string> {
+    const userText = buildQuestionText({
+      agent: params.agent,
+      language: params.language,
+      question: params.question,
+      continuing: params.history.length > 0,
+    });
     params.onPrompt?.({ userText });
-    const text = (t: string): LlmContentPart[] => [{ kind: 'text', text: t }];
     const messages: LlmMessage[] = [
-      { role: 'system', parts: text(params.agent.systemPrompt) },
-      ...params.history.flatMap((turn): LlmMessage[] => [
-        {
-          role: 'user',
-          parts: [
-            ...(turn.images ?? []).map((imageBase64): LlmContentPart => ({ kind: 'image', imageBase64 })),
-            ...text(turn.userText),
-          ],
-        },
-        { role: 'assistant', parts: text(turn.answer) },
-      ]),
-      { role: 'user', parts: text(userText) },
+      { role: 'system', parts: [{ kind: 'text', text: params.agent.systemPrompt }] },
+      ...historyMessages(params.history),
+      { role: 'user', parts: [{ kind: 'text', text: userText }], cache: true },
     ];
     yield* this.stream(params.agent, messages, params);
   }
