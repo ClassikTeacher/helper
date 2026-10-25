@@ -20,7 +20,9 @@ Operational context for running the project. See also
 cd app
 pnpm install
 pnpm rebuild esbuild     # pnpm 10 skips build scripts by default; Vite/Vitest need esbuild's binary
-cp .env.example .env      # optional dev convenience
+cp .env.example .env      # optional: non-secret tuning (models, hotkeys)
+# Dev-only OpenRouter key (never in .env — it would be inlined into a build):
+echo 'VITE_OPENROUTER_API_KEY=sk-or-v1-...' > .env.development.local
 ```
 
 ## Running

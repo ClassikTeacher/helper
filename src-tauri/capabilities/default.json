@@ -11,9 +11,8 @@
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
     "global-shortcut:allow-is-registered",
-    "sql:default",
-    "sql:allow-execute",
     "store:default",
-    "clipboard-manager:allow-read-text"
+    "clipboard-manager:allow-read-text",
+    "log:default"
   ]
 }

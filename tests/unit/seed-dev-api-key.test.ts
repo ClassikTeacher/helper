@@ -32,7 +32,7 @@ describe('seedDevApiKey', () => {
 
     await seedDevApiKey(createContainer(secrets));
 
-    expect(await secrets.get(SECRET_KEYS.openRouterApiKey)).toBe('sk-or-test-key');
+    expect(secrets.peek(SECRET_KEYS.openRouterApiKey)).toBe('sk-or-test-key');
   });
 
   it('does not overwrite a key the user already configured', async () => {
@@ -41,7 +41,7 @@ describe('seedDevApiKey', () => {
 
     await seedDevApiKey(createContainer(secrets));
 
-    expect(await secrets.get(SECRET_KEYS.openRouterApiKey)).toBe('sk-or-user-entered');
+    expect(secrets.peek(SECRET_KEYS.openRouterApiKey)).toBe('sk-or-user-entered');
   });
 
   it('is a no-op when no env key is provided', async () => {
@@ -50,15 +50,16 @@ describe('seedDevApiKey', () => {
 
     await seedDevApiKey(createContainer(secrets));
 
-    expect(await secrets.get(SECRET_KEYS.openRouterApiKey)).toBeNull();
+    expect(secrets.peek(SECRET_KEYS.openRouterApiKey)).toBeNull();
   });
 
   it('never throws when the keychain write fails', async () => {
     const failing: SecretsPort = {
-      get: async () => null,
+      has: async () => false,
       set: async () => {
         throw new Error('keychain unavailable');
       },
+      delete: async () => {},
     };
 
     await expect(seedDevApiKey(createContainer(failing))).resolves.toBeUndefined();

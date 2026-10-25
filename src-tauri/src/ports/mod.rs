@@ -25,9 +25,15 @@ pub trait OcrEngine: Send + Sync {
     fn status(&self) -> OcrStatus;
 }
 
+/// OS credential store. `get` is NATIVE-ONLY: it backs the provider calls
+/// (`llm_stream`, `transcribe_audio`) and is deliberately not exposed as an
+/// IPC command — the webview only ever gets `secret_has`/`secret_set`/
+/// `secret_delete` (see `commands/secrets.rs`).
 pub trait SecretStore: Send + Sync {
     fn get(&self, key: &str) -> Result<Option<String>, String>;
     fn set(&self, key: &str, value: &str) -> Result<(), String>;
+    /// Remove the secret. A key that is not set is not an error.
+    fn delete(&self, key: &str) -> Result<(), String>;
 }
 
 /// Raw captured audio drained from a recorder: interleaved `f32` samples plus

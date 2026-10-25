@@ -8,15 +8,10 @@ use tauri::State;
 
 use futures_util::future::{select, Either};
 
+use crate::commands::secrets::OPENROUTER_API_KEY_SECRET;
 use crate::dto::{LlmCancelRequest, LlmChunk, LlmStreamRequest};
 use crate::infra::image::downscale_request_images;
 use crate::AppState;
-
-/// `SecretStore` key for the OpenRouter API key. MUST match
-/// `SECRET_KEYS.openRouterApiKey` in `core/application/ports/secrets.port.ts`
-/// — this string is the only thing tying the two sides together (there is no
-/// shared enum across the Rust/TS seam for secret keys).
-const OPENROUTER_API_KEY_SECRET: &str = "openrouter.api_key";
 
 /// Always returns `Ok(())`: every failure (missing key, HTTP error, network
 /// error, malformed stream) is delivered as a terminal `LlmChunk::Error` over

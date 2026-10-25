@@ -7,6 +7,8 @@
 //! and every failure path (HTTP error, network error, malformed stream) is
 //! delivered as a terminal `LlmChunk::Error` instead of a process exit.
 
+use std::time::{Duration, Instant};
+
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 use tauri::ipc::Channel;
@@ -15,14 +17,187 @@ use crate::dto::{LlmChunk, LlmContentPart, LlmMessage, LlmRole, LlmStreamRequest
 
 const OPENROUTER_CHAT_COMPLETIONS_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
+/// TCP/TLS connect timeout (`AI_HELPER_LLM_CONNECT_TIMEOUT_MS`).
+const CONNECT_TIMEOUT_ENV: &str = "AI_HELPER_LLM_CONNECT_TIMEOUT_MS";
+const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 10_000;
+/// Time allowed from sending the request until the FIRST byte of the response
+/// body (`AI_HELPER_LLM_FIRST_BYTE_TIMEOUT_MS`).
+const FIRST_BYTE_TIMEOUT_ENV: &str = "AI_HELPER_LLM_FIRST_BYTE_TIMEOUT_MS";
+const DEFAULT_FIRST_BYTE_TIMEOUT_MS: u64 = 30_000;
+/// Longest silence tolerated between two body chunks once streaming
+/// (`AI_HELPER_LLM_IDLE_TIMEOUT_MS`).
+const IDLE_TIMEOUT_ENV: &str = "AI_HELPER_LLM_IDLE_TIMEOUT_MS";
+const DEFAULT_IDLE_TIMEOUT_MS: u64 = 60_000;
+
+/// Watchdog for the streaming request (2026-10 review §3.1). Without it a
+/// provider that accepts the connection and then hangs kept `llm_stream` open
+/// forever: no error chunk, hence no failover — exactly the "provider is
+/// down" case the failover exists for; only a manual Stop helped.
+///
+/// The watchdog counts BYTES, not tokens: OpenRouter sends `: OPENROUTER
+/// PROCESSING` keep-alive comments while the model is still thinking, so a
+/// long reasoning phase keeps resetting the idle timer and is never mistaken
+/// for a hang, while a dead connection (no bytes at all) is. A timeout before
+/// the first text delta is reported as a retryable error, so `ResilientLlm`
+/// moves on to the next model; after content has streamed the same error just
+/// ends the answer ("Interrupted" in the HUD).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamTimeouts {
+    pub connect: Duration,
+    pub first_byte: Duration,
+    pub idle: Duration,
+}
+
+impl Default for StreamTimeouts {
+    fn default() -> Self {
+        Self {
+            connect: Duration::from_millis(DEFAULT_CONNECT_TIMEOUT_MS),
+            first_byte: Duration::from_millis(DEFAULT_FIRST_BYTE_TIMEOUT_MS),
+            idle: Duration::from_millis(DEFAULT_IDLE_TIMEOUT_MS),
+        }
+    }
+}
+
+impl StreamTimeouts {
+    /// The timeouts from the process environment (see the `*_ENV` constants).
+    pub fn from_env() -> Self {
+        resolve_timeouts(
+            std::env::var(CONNECT_TIMEOUT_ENV).ok().as_deref(),
+            std::env::var(FIRST_BYTE_TIMEOUT_ENV).ok().as_deref(),
+            std::env::var(IDLE_TIMEOUT_ENV).ok().as_deref(),
+        )
+    }
+}
+
+/// Parses the env overrides: a positive integer of milliseconds, anything
+/// else (unset, blank, zero, garbage) keeps the default. Pure — unit-tested.
+fn resolve_timeouts(connect: Option<&str>, first_byte: Option<&str>, idle: Option<&str>) -> StreamTimeouts {
+    let defaults = StreamTimeouts::default();
+    let pick = |raw: Option<&str>, default: Duration| {
+        raw.and_then(|v| v.trim().parse::<u64>().ok())
+            .filter(|&ms| ms > 0)
+            .map_or(default, Duration::from_millis)
+    };
+    StreamTimeouts {
+        connect: pick(connect, defaults.connect),
+        first_byte: pick(first_byte, defaults.first_byte),
+        idle: pick(idle, defaults.idle),
+    }
+}
+
+/// How long to wait for the next body chunk: the remainder of the first-byte
+/// budget (measured from when the request was sent) until anything arrived,
+/// then the idle gap. Pure — unit-tested.
+fn next_chunk_wait(timeouts: &StreamTimeouts, started: Instant, now: Instant, received_any: bool) -> Duration {
+    if received_any {
+        timeouts.idle
+    } else {
+        timeouts.first_byte.saturating_sub(now.saturating_duration_since(started))
+    }
+}
+
+/// `provider.data_collection` override: `deny` (default) or `allow`.
+const DATA_COLLECTION_ENV: &str = "AI_HELPER_DATA_COLLECTION";
+/// `provider.zdr` override: `true`/`1`/`on` routes only to zero-data-retention endpoints.
+const ZDR_ENV: &str = "AI_HELPER_ZDR";
+
+/// OpenRouter provider preferences sent with every chat request (2026-10
+/// review §2.3). OpenRouter is a router: a request to a model slug lands on
+/// one of several upstream endpoints with different logging/training
+/// policies. What this app sends — screenshots of screens that are often not
+/// the user's own, and the interlocutor's voice as a transcript — must not end
+/// up with a provider that retains or trains on it, so by default routing is
+/// restricted to providers whose published policy is "no data collection".
+/// `zdr` narrows further to zero-data-retention endpoints (fewer providers;
+/// off by default). Not sent on the STT upload: that endpoint's support for
+/// provider preferences is unverified and an unknown multipart field could
+/// reject the whole request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderPolicy {
+    /// `true` → `"data_collection": "deny"`; `false` → OpenRouter's default routing.
+    pub deny_data_collection: bool,
+    /// `true` → `"zdr": true`.
+    pub zdr: bool,
+}
+
+impl Default for ProviderPolicy {
+    fn default() -> Self {
+        Self {
+            deny_data_collection: true,
+            zdr: false,
+        }
+    }
+}
+
+impl ProviderPolicy {
+    /// The policy from the process environment (see the `*_ENV` constants).
+    pub fn from_env() -> Self {
+        resolve_provider_policy(
+            std::env::var(DATA_COLLECTION_ENV).ok().as_deref(),
+            std::env::var(ZDR_ENV).ok().as_deref(),
+        )
+    }
+}
+
+/// Parses the env overrides. `data_collection`: `allow` turns the restriction
+/// off, anything else (unset, blank, `deny`, a typo) keeps the safe default.
+/// `zdr`: `true`/`1`/`on`/`yes` enables it. Pure — unit-tested.
+fn resolve_provider_policy(data_collection: Option<&str>, zdr: Option<&str>) -> ProviderPolicy {
+    let allow = data_collection
+        .map(str::trim)
+        .is_some_and(|v| v.eq_ignore_ascii_case("allow"));
+    let zdr = zdr
+        .map(|v| v.trim().to_ascii_lowercase())
+        .is_some_and(|v| matches!(v.as_str(), "true" | "1" | "on" | "yes"));
+    ProviderPolicy {
+        deny_data_collection: !allow,
+        zdr,
+    }
+}
+
+/// The `provider` object for the request body, or `None` when the policy is
+/// OpenRouter's default (nothing to send).
+fn provider_preferences(policy: &ProviderPolicy) -> Option<Value> {
+    let mut provider = serde_json::Map::new();
+    if policy.deny_data_collection {
+        provider.insert("data_collection".to_string(), json!("deny"));
+    }
+    if policy.zdr {
+        provider.insert("zdr".to_string(), json!(true));
+    }
+    (!provider.is_empty()).then_some(Value::Object(provider))
+}
+
 pub struct OpenRouterClient {
     http: reqwest::Client,
+    policy: ProviderPolicy,
+    timeouts: StreamTimeouts,
+    chat_url: String,
 }
 
 impl OpenRouterClient {
     pub fn new() -> Self {
+        Self::with_config(
+            OPENROUTER_CHAT_COMPLETIONS_URL,
+            ProviderPolicy::from_env(),
+            StreamTimeouts::from_env(),
+        )
+    }
+
+    /// Explicit configuration — production uses `new()`; tests point `chat_url`
+    /// at a local server and shrink the timeouts.
+    pub fn with_config(chat_url: &str, policy: ProviderPolicy, timeouts: StreamTimeouts) -> Self {
+        let http = reqwest::Client::builder()
+            .connect_timeout(timeouts.connect)
+            .build()
+            // Building only fails on a broken TLS backend; the plain client
+            // would fail the same way, just without the connect timeout.
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
-            http: reqwest::Client::new(),
+            http,
+            policy,
+            timeouts,
+            chat_url: chat_url.to_string(),
         }
     }
 
@@ -38,21 +213,44 @@ impl OpenRouterClient {
         request: &LlmStreamRequest,
         channel: &Channel<LlmChunk>,
     ) {
-        let body = build_request_body(request);
+        let body = build_request_body(request, &self.policy);
+        let started = Instant::now();
+        let first_byte_secs = self.timeouts.first_byte.as_secs_f64();
+        log::info!(
+            "llm_stream: model={} messages={} images={} reasoning={} max_edge={:?}",
+            request.model,
+            request.messages.len(),
+            request
+                .messages
+                .iter()
+                .flat_map(|m| m.parts.iter())
+                .filter(|p| matches!(p, LlmContentPart::Image { .. }))
+                .count(),
+            request.reasoning_effort.as_deref().unwrap_or("off"),
+            request.max_image_edge,
+        );
 
-        let response = match self
+        // The response headers must arrive within the first-byte budget too.
+        let send = self
             .http
-            .post(OPENROUTER_CHAT_COMPLETIONS_URL)
+            .post(&self.chat_url)
             .bearer_auth(api_key)
             .json(&body)
-            .send()
-            .await
-        {
-            Ok(resp) => resp,
-            Err(e) => {
+            .send();
+        let response = match tokio::time::timeout(self.timeouts.first_byte, send).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(e)) => {
                 // Network/transport failure reaching OpenRouter — transient, so
                 // another model (or a retry) may well succeed: retryable.
                 send_error(channel, format!("OpenRouter request failed: {e}"), true);
+                return;
+            }
+            Err(_) => {
+                send_error(
+                    channel,
+                    format!("OpenRouter did not respond within {first_byte_secs:.0}s"),
+                    true,
+                );
                 return;
             }
         };
@@ -76,8 +274,30 @@ impl OpenRouterClient {
         let mut buf: Vec<u8> = Vec::new();
         let mut stream = response.bytes_stream();
         let mut state = StreamState::default();
+        let mut received_any = false;
 
-        while let Some(item) = stream.next().await {
+        loop {
+            // Watchdog: the rest of the first-byte budget until the body starts,
+            // then the idle gap between chunks (keep-alive comments count).
+            let wait = next_chunk_wait(&self.timeouts, started, Instant::now(), received_any);
+            let item = match tokio::time::timeout(wait, stream.next()).await {
+                Ok(Some(item)) => item,
+                Ok(None) => break,
+                Err(_) => {
+                    let message = if received_any {
+                        format!(
+                            "OpenRouter stream stalled: no data for {:.0}s",
+                            self.timeouts.idle.as_secs_f64()
+                        )
+                    } else {
+                        format!("OpenRouter sent no data within {first_byte_secs:.0}s")
+                    };
+                    // A stall is provider-side and transient: retryable, so a
+                    // pre-content stall fails over to the next model.
+                    send_error(channel, message, true);
+                    return;
+                }
+            };
             let bytes = match item {
                 Ok(b) => b,
                 Err(e) => {
@@ -86,11 +306,15 @@ impl OpenRouterClient {
                     return;
                 }
             };
+            received_any = true;
             buf.extend_from_slice(&bytes);
 
             for event in drain_sse_events(&mut buf) {
                 let step = state.step(parse_sse_event(&event));
                 for chunk in step.chunks {
+                    if step.terminal {
+                        log_terminal(&chunk, started);
+                    }
                     let _ = channel.send(chunk);
                 }
                 if step.terminal {
@@ -104,7 +328,9 @@ impl OpenRouterClient {
         // leaving the webview awaiting a stream that ended. Provider closed the
         // stream without a terminator — a transient provider hiccup: retryable
         // (the webview only fails over if no content was produced).
-        let _ = channel.send(state.end_of_body());
+        let last = state.end_of_body();
+        log_terminal(&last, started);
+        let _ = channel.send(last);
     }
 }
 
@@ -124,7 +350,31 @@ impl Default for OpenRouterClient {
 }
 
 fn send_error(channel: &Channel<LlmChunk>, message: String, retryable: bool) {
+    log::warn!("llm_stream: error (retryable={retryable}): {message}");
     let _ = channel.send(LlmChunk::Error { message, retryable });
+}
+
+/// One log line per completed stream: outcome, model, tokens, cost, duration —
+/// never the content (logging policy, lib.rs).
+fn log_terminal(chunk: &LlmChunk, started: Instant) {
+    let ms = started.elapsed().as_millis();
+    match chunk {
+        LlmChunk::Finish { reason, usage, model } => log::info!(
+            "llm_stream: finish reason={reason} model={} tokens={} cost={} in {ms} ms",
+            model.as_deref().unwrap_or("?"),
+            usage
+                .as_ref()
+                .map_or("?".to_string(), |u| format!("{}->{}", u.input_tokens, u.output_tokens)),
+            usage
+                .as_ref()
+                .and_then(|u| u.cost)
+                .map_or("?".to_string(), |c| format!("{c:.4}")),
+        ),
+        LlmChunk::Error { message, retryable } => {
+            log::warn!("llm_stream: terminal error (retryable={retryable}) after {ms} ms: {message}")
+        }
+        LlmChunk::TextDelta { .. } => {}
+    }
 }
 
 /// Builds the OpenAI-compatible chat-completions request body. `usage.include`
@@ -141,7 +391,10 @@ fn send_error(channel: &Channel<LlmChunk>, message: String, retryable: bool) {
 /// `max_tokens` is deliberately NEVER sent (user decision 2026-07-22): a cap
 /// would silently truncate answers; completeness wins. A provider-side length
 /// stop is still reported via `finish_reason: "length"` and shown in the HUD.
-fn build_request_body(request: &LlmStreamRequest) -> Value {
+///
+/// `provider` carries the data policy (see `ProviderPolicy`) — omitted only
+/// when the policy is OpenRouter's default.
+fn build_request_body(request: &LlmStreamRequest, policy: &ProviderPolicy) -> Value {
     let mut body = json!({
         "model": request.model,
         "stream": true,
@@ -157,6 +410,9 @@ fn build_request_body(request: &LlmStreamRequest) -> Value {
     }
     if let Some(effort) = &request.reasoning_effort {
         body["reasoning"] = json!({ "effort": effort, "exclude": true });
+    }
+    if let Some(provider) = provider_preferences(policy) {
+        body["provider"] = provider;
     }
     body
 }
@@ -733,7 +989,7 @@ mod tests {
             request_id: None,
         };
 
-        let body = build_request_body(&request);
+        let body = build_request_body(&request, &ProviderPolicy::default());
         assert_eq!(body["model"], "openai/gpt-4o-mini");
         assert_eq!(body["stream"], true);
         assert_eq!(body["usage"]["include"], true);
@@ -780,7 +1036,7 @@ mod tests {
             request_id: None,
         };
 
-        let body = build_request_body(&request);
+        let body = build_request_body(&request, &ProviderPolicy::default());
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(
             body["messages"][0]["content"],
@@ -808,7 +1064,7 @@ mod tests {
 
     #[test]
     fn build_request_body_omits_unset_parameters_and_never_sends_max_tokens() {
-        let body = build_request_body(&text_request());
+        let body = build_request_body(&text_request(), &ProviderPolicy::default());
         assert!(body.get("temperature").is_none());
         assert!(body.get("reasoning").is_none());
         // Completeness over caps (user decision 2026-07-22).
@@ -816,11 +1072,46 @@ mod tests {
     }
 
     #[test]
+    fn build_request_body_denies_provider_data_collection_by_default() {
+        // 2026-10 review §2.3: other people's screens and voice must not be
+        // routed to a provider that stores or trains on prompts.
+        let body = build_request_body(&text_request(), &ProviderPolicy::default());
+        assert_eq!(body["provider"]["data_collection"], "deny");
+        assert!(body["provider"].get("zdr").is_none());
+    }
+
+    #[test]
+    fn build_request_body_omits_provider_preferences_when_allowed_and_sends_zdr_when_asked() {
+        let allow = ProviderPolicy { deny_data_collection: false, zdr: false };
+        assert!(build_request_body(&text_request(), &allow).get("provider").is_none());
+
+        let strict = ProviderPolicy { deny_data_collection: true, zdr: true };
+        let body = build_request_body(&text_request(), &strict);
+        assert_eq!(body["provider"]["data_collection"], "deny");
+        assert_eq!(body["provider"]["zdr"], true);
+    }
+
+    #[test]
+    fn provider_policy_env_defaults_to_deny_and_only_an_explicit_allow_relaxes_it() {
+        assert_eq!(resolve_provider_policy(None, None), ProviderPolicy::default());
+        assert_eq!(resolve_provider_policy(Some(""), Some("")), ProviderPolicy::default());
+        assert_eq!(resolve_provider_policy(Some("deny"), None), ProviderPolicy::default());
+        assert_eq!(resolve_provider_policy(Some("alow"), None), ProviderPolicy::default());
+        assert_eq!(
+            resolve_provider_policy(Some(" Allow "), Some("true")),
+            ProviderPolicy { deny_data_collection: false, zdr: true }
+        );
+        assert!(resolve_provider_policy(None, Some("1")).zdr);
+        assert!(resolve_provider_policy(None, Some("ON")).zdr);
+        assert!(!resolve_provider_policy(None, Some("false")).zdr);
+    }
+
+    #[test]
     fn build_request_body_sends_temperature_and_excluded_reasoning_when_set() {
         let mut request = text_request();
         request.temperature = Some(0.3);
         request.reasoning_effort = Some("medium".to_string());
-        let body = build_request_body(&request);
+        let body = build_request_body(&request, &ProviderPolicy::default());
         assert_eq!(body["temperature"], 0.3);
         assert_eq!(body["reasoning"]["effort"], "medium");
         // The thinking is not streamed back to the HUD.
@@ -850,7 +1141,8 @@ mod tests {
 
     #[test]
     fn build_request_body_marks_the_cache_breakpoint_for_anthropic_models() {
-        let body = build_request_body(&dialog_request("anthropic/claude-haiku-4.5"));
+        let body =
+            build_request_body(&dialog_request("anthropic/claude-haiku-4.5"), &ProviderPolicy::default());
         let last = &body["messages"][3]["content"];
         // On the last text part; the image before it is still in the cached prefix.
         assert_eq!(last[1]["cache_control"]["type"], "ephemeral");
@@ -863,9 +1155,191 @@ mod tests {
     #[test]
     fn build_request_body_sends_no_cache_marker_to_other_providers() {
         for model in ["google/gemini-3.1-flash-lite", "openai/gpt-4o-mini"] {
-            let body = build_request_body(&dialog_request(model));
+            let body = build_request_body(&dialog_request(model), &ProviderPolicy::default());
             let serialized = body.to_string();
             assert!(!serialized.contains("cache_control"), "{model}: {serialized}");
+        }
+    }
+
+    // --- Stream watchdog (2026-10 review §3.1) -----------------------------
+
+    #[test]
+    fn stream_timeouts_env_overrides_apply_only_when_positive_integers() {
+        let d = StreamTimeouts::default();
+        assert_eq!(resolve_timeouts(None, None, None), d);
+        assert_eq!(resolve_timeouts(Some(""), Some("0"), Some("soon")), d);
+        assert_eq!(
+            resolve_timeouts(Some(" 5000 "), Some("15000"), Some("90000")),
+            StreamTimeouts {
+                connect: Duration::from_millis(5000),
+                first_byte: Duration::from_millis(15000),
+                idle: Duration::from_millis(90000),
+            }
+        );
+    }
+
+    #[test]
+    fn next_chunk_wait_spends_the_first_byte_budget_then_switches_to_the_idle_gap() {
+        let t = StreamTimeouts {
+            connect: Duration::from_secs(1),
+            first_byte: Duration::from_millis(300),
+            idle: Duration::from_millis(1000),
+        };
+        let started = Instant::now();
+        assert_eq!(next_chunk_wait(&t, started, started, false), Duration::from_millis(300));
+        assert_eq!(
+            next_chunk_wait(&t, started, started + Duration::from_millis(100), false),
+            Duration::from_millis(200)
+        );
+        // Budget exhausted: zero wait, the very next poll times out.
+        assert_eq!(next_chunk_wait(&t, started, started + Duration::from_secs(5), false), Duration::ZERO);
+        // Once anything arrived, every chunk gets the full idle gap.
+        assert_eq!(next_chunk_wait(&t, started, started + Duration::from_secs(5), true), Duration::from_millis(1000));
+    }
+
+    // Live-socket scenarios: a tiny local HTTP/1.1 server drives the client's
+    // real `reqwest` path, so the timeouts are exercised exactly as in
+    // production (minus TLS). Bodies are "until close" (no Content-Length).
+    mod watchdog {
+        use super::*;
+        use std::future::Future;
+        use std::sync::{Arc, Mutex};
+        use tauri::ipc::InvokeResponseBody;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::{TcpListener, TcpStream};
+
+        const HEADERS: &[u8] =
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
+        const DELTA: &[u8] = b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n";
+        const DONE: &[u8] = b"data: [DONE]\n\n";
+
+        fn fast() -> StreamTimeouts {
+            StreamTimeouts {
+                connect: Duration::from_secs(2),
+                first_byte: Duration::from_millis(250),
+                idle: Duration::from_millis(150),
+            }
+        }
+
+        /// Serves exactly one connection with `handler`; returns the chat URL.
+        async fn serve_once<F, Fut>(handler: F) -> String
+        where
+            F: FnOnce(TcpStream) -> Fut + Send + 'static,
+            Fut: Future<Output = ()> + Send,
+        {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                if let Ok((stream, _)) = listener.accept().await {
+                    handler(stream).await;
+                }
+            });
+            format!("http://{addr}/api/v1/chat/completions")
+        }
+
+        /// Reads whatever the client sent first (headers + the small JSON body).
+        async fn read_request(stream: &mut TcpStream) {
+            let mut buf = vec![0u8; 8192];
+            let _ = stream.read(&mut buf).await;
+        }
+
+        /// Runs the client against `url` and returns every chunk it sent.
+        async fn collect(url: &str, timeouts: StreamTimeouts) -> Vec<LlmChunk> {
+            let chunks = Arc::new(Mutex::new(Vec::new()));
+            let sink = chunks.clone();
+            let channel = Channel::new(move |body: InvokeResponseBody| {
+                if let InvokeResponseBody::Json(json) = body {
+                    sink.lock().unwrap().push(serde_json::from_str::<LlmChunk>(&json).unwrap());
+                }
+                Ok(())
+            });
+            let client = OpenRouterClient::with_config(url, ProviderPolicy::default(), timeouts);
+            client.stream_chat("test-key", &text_request(), &channel).await;
+            let out = chunks.lock().unwrap().clone();
+            out
+        }
+
+        fn is_retryable_error(chunk: &LlmChunk, needle: &str) -> bool {
+            matches!(chunk, LlmChunk::Error { message, retryable: true } if message.contains(needle))
+        }
+
+        #[tokio::test]
+        async fn a_server_that_never_responds_fails_over_within_the_first_byte_budget() {
+            let url = serve_once(|mut s| async move {
+                read_request(&mut s).await;
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            })
+            .await;
+
+            let started = Instant::now();
+            let chunks = collect(&url, fast()).await;
+
+            assert!(started.elapsed() < Duration::from_secs(2), "took {:?}", started.elapsed());
+            assert_eq!(chunks.len(), 1, "{chunks:?}");
+            assert!(is_retryable_error(&chunks[0], "did not respond"), "{chunks:?}");
+        }
+
+        #[tokio::test]
+        async fn headers_without_any_body_time_out_as_a_retryable_error() {
+            let url = serve_once(|mut s| async move {
+                read_request(&mut s).await;
+                s.write_all(HEADERS).await.unwrap();
+                s.flush().await.unwrap();
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            })
+            .await;
+
+            let chunks = collect(&url, fast()).await;
+
+            assert_eq!(chunks.len(), 1, "{chunks:?}");
+            assert!(is_retryable_error(&chunks[0], "sent no data"), "{chunks:?}");
+        }
+
+        #[tokio::test]
+        async fn a_stall_after_content_ends_the_answer_with_a_retryable_error() {
+            let url = serve_once(|mut s| async move {
+                read_request(&mut s).await;
+                s.write_all(HEADERS).await.unwrap();
+                s.write_all(DELTA).await.unwrap();
+                s.flush().await.unwrap();
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            })
+            .await;
+
+            let chunks = collect(&url, fast()).await;
+
+            assert_eq!(chunks.len(), 2, "{chunks:?}");
+            assert_eq!(chunks[0], LlmChunk::TextDelta { delta: "hi".to_string() });
+            assert!(is_retryable_error(&chunks[1], "stalled"), "{chunks:?}");
+        }
+
+        #[tokio::test]
+        async fn keep_alive_comments_reset_the_idle_timer_while_the_model_thinks() {
+            // 6 × 60 ms of keep-alives = 360 ms of "no tokens" against a 150 ms
+            // idle gap: bytes keep flowing, so it must NOT time out.
+            let url = serve_once(|mut s| async move {
+                read_request(&mut s).await;
+                s.write_all(HEADERS).await.unwrap();
+                for _ in 0..6 {
+                    s.write_all(b": OPENROUTER PROCESSING\n\n").await.unwrap();
+                    s.flush().await.unwrap();
+                    tokio::time::sleep(Duration::from_millis(60)).await;
+                }
+                s.write_all(DELTA).await.unwrap();
+                s.write_all(DONE).await.unwrap();
+                s.flush().await.unwrap();
+            })
+            .await;
+
+            let chunks = collect(&url, fast()).await;
+
+            assert_eq!(
+                chunks,
+                vec![
+                    LlmChunk::TextDelta { delta: "hi".to_string() },
+                    LlmChunk::Finish { reason: "stop".to_string(), usage: None, model: None },
+                ]
+            );
         }
     }
 }

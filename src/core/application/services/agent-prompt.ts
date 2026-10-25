@@ -50,8 +50,7 @@ export interface BuiltPrompt {
 /**
  * Assembles the system + user text for an agent invocation. Pure — no I/O, no
  * framework — so it is unit-tested directly and shared by the runner (to build
- * the LLM messages), the record path (via `summarizeInvocation`) and the prompt
- * eval harness (docs/prompt-eval).
+ * the LLM messages) and the prompt eval harness (docs/prompt-eval).
  *
  * Variable data goes into XML-tagged blocks (`<hints>`, `<code_text>`,
  * `<transcript>`): tags make the boundaries unambiguous for the model and let
@@ -214,23 +213,4 @@ export function numberLines(text: string): string {
       return line.length > 0 ? `${n}| ${line}` : `${n}|`;
     })
     .join('\n');
-}
-
-/**
- * A short, human-readable summary of an invocation — used as the stored
- * conversation's "prompt"/title (the raw system prompt would be noise there).
- */
-export function summarizeInvocation({
-  agent,
-  language,
-  instructions,
-  codeText,
-}: AgentInvocation): string {
-  const head =
-    agent.requiresLanguage && language !== 'all'
-      ? `${agent.name} (${languageLabel(language)})`
-      : agent.name;
-  const withCode = codeText?.trim() ? `${head} [код текстом]` : head;
-  const trimmed = instructions.trim();
-  return trimmed ? `${withCode} — ${trimmed}` : withCode;
 }

@@ -3,6 +3,7 @@
 
 pub mod audio;
 pub mod capture;
+pub mod diagnostics;
 pub mod llm;
 pub mod ocr;
 pub mod secrets;

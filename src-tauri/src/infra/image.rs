@@ -234,7 +234,7 @@ pub fn downscale_request_images(request: &mut LlmStreamRequest) -> usize {
                     }
                     Ok(None) => false,
                     Err(e) => {
-                        eprintln!("[llm_stream] image left unscaled: {e}");
+                        log::warn!("llm_stream: image left unscaled: {e}");
                         false
                     }
                 })

@@ -172,16 +172,22 @@ pub enum LlmChunk {
     },
 }
 
+// --- Secrets (write-only from the webview) ---------------------------------
+// `secret_has`/`secret_delete` take the key; `secret_set` takes key + value.
+// There is deliberately NO DTO carrying a secret value back to the webview
+// (see `commands/secrets.rs`). Mirror of `Secret*Dto` in dto.ts.
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SecretGetRequest {
+pub struct SecretKeyRequest {
     pub key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SecretGetResult {
-    pub value: Option<String>,
+pub struct SecretHasResult {
+    /// A non-empty value is stored under the key.
+    pub exists: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,6 +216,21 @@ pub struct AudioStartResult {
 pub struct TranscribeResult {
     /// Recognized transcript (may be empty if nothing was captured).
     pub text: String,
+}
+
+// --- Diagnostics (2026-10 review §5.5) --------------------------------------
+/// Result of `diagnostics_snapshot`: what the user pastes into a bug report.
+/// Mirror of `DiagnosticsSnapshotDto` in dto.ts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticsSnapshot {
+    pub app_version: String,
+    pub os: String,
+    pub arch: String,
+    /// Where the native log file lives, for the user.
+    pub log_path: String,
+    /// The last lines of that file (no secrets/prompts/transcripts are ever logged).
+    pub log_tail: String,
 }
 
 #[cfg(test)]

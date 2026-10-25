@@ -127,11 +127,16 @@ export type LlmChunkDto =
   // key, auth, bad request). Mirrors `LlmChunk::Error.retryable` in dto.rs.
   | { readonly type: 'error'; readonly message: string; readonly retryable: boolean };
 
-export interface SecretGetRequestDto {
+// --- Secrets (write-only from the webview) ---------------------------------
+// There is deliberately no DTO that carries a secret value back to the webview
+// (architecture.md §11). Mirror of `SecretKeyRequest`/`SecretHasResult`/
+// `SecretSetRequest` in dto.rs.
+export interface SecretKeyRequestDto {
   readonly key: string;
 }
-export interface SecretGetResultDto {
-  readonly value: string | null;
+export interface SecretHasResultDto {
+  /** A non-empty value is stored under the key. */
+  readonly exists: boolean;
 }
 export interface SecretSetRequestDto {
   readonly key: string;
@@ -150,4 +155,16 @@ export interface AudioStartResultDto {
 export interface TranscribeResultDto {
   /** Recognized transcript (may be empty if nothing was captured). */
   readonly text: string;
+}
+
+// --- Diagnostics (2026-10 review §5.5) --------------------------------------
+/** Result of `diagnosticsSnapshot`. Mirror of `DiagnosticsSnapshot` in dto.rs. */
+export interface DiagnosticsSnapshotDto {
+  readonly appVersion: string;
+  readonly os: string;
+  readonly arch: string;
+  /** Where the native log file lives. */
+  readonly logPath: string;
+  /** The last lines of that file (never secrets/prompts/transcripts). */
+  readonly logTail: string;
 }

@@ -5,6 +5,7 @@ import { ServicesProvider } from '@/bootstrap/ServicesProvider';
 import { createContainer } from '@/bootstrap/container';
 import { InMemorySecretsAdapter } from '@/infrastructure/mocks/in-memory-secrets.adapter';
 import { SECRET_KEYS } from '@/core/application/ports/secrets.port';
+import type { SecretsPort } from '@/core/application/ports/secrets.port';
 import type { PropsWithChildren } from 'react';
 
 function wrapperWithContainer(container: ReturnType<typeof createContainer>) {
@@ -44,15 +45,32 @@ describe('useApiKeySettings', () => {
     expect(result.current.hasKey).toBe(true);
     expect(result.current.status).toBe('saved');
     expect(result.current.error).toBeNull();
-    expect(await secrets.get(SECRET_KEYS.openRouterApiKey)).toBe('sk-or-v1-new');
+    expect(secrets.peek(SECRET_KEYS.openRouterApiKey)).toBe('sk-or-v1-new');
+  });
+
+  it('clear() removes the key and flips hasKey to false', async () => {
+    const secrets = new InMemorySecretsAdapter();
+    await secrets.set(SECRET_KEYS.openRouterApiKey, 'sk-or-v1-existing');
+    const container = createContainer({ secrets });
+    const { result } = renderHook(() => useApiKeySettings(), { wrapper: wrapperWithContainer(container) });
+    await waitFor(() => expect(result.current.hasKey).toBe(true));
+
+    await act(async () => {
+      await result.current.clear();
+    });
+
+    expect(result.current.hasKey).toBe(false);
+    expect(result.current.status).toBe('cleared');
+    expect(secrets.peek(SECRET_KEYS.openRouterApiKey)).toBeNull();
   });
 
   it('surfaces a save failure via status/error instead of throwing', async () => {
-    const failingSecrets = {
-      get: async () => null,
+    const failingSecrets: SecretsPort = {
+      has: async () => false,
       set: async () => {
         throw new Error('keychain write failed');
       },
+      delete: async () => {},
     };
     const container = createContainer({ secrets: failingSecrets });
     const { result } = renderHook(() => useApiKeySettings(), { wrapper: wrapperWithContainer(container) });

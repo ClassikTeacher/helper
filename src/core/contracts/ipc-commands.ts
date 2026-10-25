@@ -20,8 +20,16 @@ export const IPC_COMMANDS = {
    * arrives before the stream registers is remembered natively.
    */
   llmCancel: 'llm_cancel',
-  secretGet: 'secret_get',
+  /**
+   * Secrets are WRITE-ONLY from the webview: `secretHas` answers with a
+   * boolean, `secretSet` takes the value in, `secretDelete` removes it. There
+   * is no command that returns a secret value — native reads the keychain
+   * itself when it calls the provider (architecture.md §11). Keys are limited
+   * to `SECRET_KEYS` (allow-list in `commands/secrets.rs`).
+   */
+  secretHas: 'secret_has',
   secretSet: 'secret_set',
+  secretDelete: 'secret_delete',
   /**
    * Audio → STT (phase 9). `audioStartCapture`/`audioStopCapture` toggle native
    * WASAPI loopback recording (no payload); `transcribeAudio` drains the buffer,
@@ -38,6 +46,11 @@ export const IPC_COMMANDS = {
   overlayToggle: 'overlay_toggle',
   /** Reads the window's real OS-level visibility (native is the source of truth). */
   overlayIsVisible: 'overlay_is_visible',
+  /**
+   * Version, platform and the tail of the native log file, for bug reports
+   * (⚙ → "Copy diagnostics"). Returns a `DiagnosticsSnapshotDto`.
+   */
+  diagnosticsSnapshot: 'diagnostics_snapshot',
 } as const;
 
 export type IpcCommandName = (typeof IPC_COMMANDS)[keyof typeof IPC_COMMANDS];

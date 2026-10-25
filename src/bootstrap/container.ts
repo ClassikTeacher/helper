@@ -7,8 +7,9 @@ import { AnalyzeScreenshotUseCase } from '@/core/application/use-cases/analyze-s
 import { CaptureScreenshotUseCase } from '@/core/application/use-cases/capture-screenshot.use-case';
 import { SendPromptUseCase } from '@/core/application/use-cases/send-prompt.use-case';
 import { ManageApiKeyUseCase } from '@/core/application/use-cases/manage-api-key.use-case';
-import { RecordConversationUseCase } from '@/core/application/use-cases/record-conversation.use-case';
 import { TranscribeAudioUseCase } from '@/core/application/use-cases/transcribe-audio.use-case';
+import { GetDiagnosticsUseCase } from '@/core/application/use-cases/get-diagnostics.use-case';
+import { isTauriWindow } from './platform';
 
 import type { LlmPort } from '@/core/application/ports/llm.port';
 import type { ScreenCapturePort } from '@/core/application/ports/screen-capture.port';
@@ -16,10 +17,9 @@ import type { OverlayPort } from '@/core/application/ports/overlay.port';
 import type { HotkeyPort } from '@/core/application/ports/hotkey.port';
 import type { ClipboardPort } from '@/core/application/ports/clipboard.port';
 import type { SecretsPort } from '@/core/application/ports/secrets.port';
-import type { StoragePort } from '@/core/application/ports/storage.port';
-import type { ConversationRepository } from '@/core/application/ports/conversation.repository';
 import type { AudioTranscriptionPort } from '@/core/application/ports/audio-transcription.port';
 import type { OcrPort } from '@/core/application/ports/ocr.port';
+import type { DiagnosticsPort } from '@/core/application/ports/diagnostics.port';
 
 import { TauriScreenCaptureAdapter } from '@/infrastructure/tauri/tauri-screen-capture.adapter';
 import { TauriOverlayAdapter } from '@/infrastructure/tauri/tauri-overlay.adapter';
@@ -29,16 +29,14 @@ import { TauriSecretsAdapter } from '@/infrastructure/tauri/tauri-secrets.adapte
 import { TauriAudioAdapter } from '@/infrastructure/tauri/tauri-audio.adapter';
 import { TauriClipboardAdapter } from '@/infrastructure/tauri/tauri-clipboard.adapter';
 import { TauriOcrAdapter } from '@/infrastructure/tauri/tauri-ocr.adapter';
+import { TauriDiagnosticsAdapter } from '@/infrastructure/tauri/tauri-diagnostics.adapter';
 import { OpenRouterLlmAdapter } from '@/infrastructure/llm/openrouter-llm.adapter';
-import { TauriStorageAdapter } from '@/infrastructure/persistence/tauri-storage.adapter';
-import { SqliteConversationRepository } from '@/infrastructure/persistence/sqlite-conversation.repository';
-import { applyMigrations } from '@/infrastructure/persistence/migrations';
 import { FakeLlmAdapter } from '@/infrastructure/mocks/fake-llm.adapter';
 import { FakeScreenCaptureAdapter } from '@/infrastructure/mocks/fake-screen-capture.adapter';
 import { InMemorySecretsAdapter } from '@/infrastructure/mocks/in-memory-secrets.adapter';
 import { FakeAudioAdapter } from '@/infrastructure/mocks/fake-audio.adapter';
 import { FakeOcrAdapter } from '@/infrastructure/mocks/fake-ocr.adapter';
-import { InMemoryConversationRepository } from '@/infrastructure/mocks/in-memory-conversation.repository';
+import { FakeDiagnosticsAdapter } from '@/infrastructure/mocks/fake-diagnostics.adapter';
 
 import type { AppContainer, ContainerOverrides } from './container.types';
 
@@ -46,9 +44,14 @@ import type { AppContainer, ContainerOverrides } from './container.types';
  * Composition root — the ONLY place that knows concrete implementations.
  * In a Tauri window it wires native adapters + OpenRouter; in a plain browser
  * (`pnpm dev`) or tests it falls back to fakes. Any dependency can be overridden.
+ *
+ * Nothing here persists to disk: dialogs live in memory for the lifetime of
+ * the process (hud.store). The SQLite history of phase 4a was removed in the
+ * 2026-10 review (§2.4) — it stored other people's screen content in plain
+ * text with no reader, no retention and no viewer.
  */
 export function createContainer(overrides: ContainerOverrides = {}): AppContainer {
-  const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  const isTauri = isTauriWindow();
 
   const screenCapture: ScreenCapturePort =
     overrides.screenCapture ?? (isTauri ? new TauriScreenCaptureAdapter() : new FakeScreenCaptureAdapter());
@@ -79,17 +82,6 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
   }
   const agentRunner = new AgentRunner({ screenCapture, llm, ...(transcriber ? { transcriber } : {}) });
 
-  // Persistence (phase 4). In a Tauri window the repositories run on real SQLite
-  // via tauri-plugin-sql; in a browser/tests they fall back to in-memory stores
-  // (no migrations needed there). `storage` is shared by both repositories so
-  // the whole app uses one connection pool.
-  const storage: StoragePort | null =
-    overrides.storage ?? (isTauri ? new TauriStorageAdapter() : null);
-
-  const conversations: ConversationRepository =
-    overrides.conversationRepository ??
-    (storage ? new SqliteConversationRepository(storage) : new InMemoryConversationRepository());
-
   // NB: agents (phase 5) are a fixed built-in catalog (`core/domain/agents-catalog.ts`),
   // not persisted/editable, so there is no AgentRepository to wire — the UI
   // selects between solver/reviewer and the runner builds the prompt (YAGNI).
@@ -98,6 +90,10 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
   const hotkey: HotkeyPort = overrides.hotkey ?? (isTauri ? new TauriHotkeyAdapter() : noopHotkey);
   const clipboard: ClipboardPort =
     overrides.clipboard ?? (isTauri ? new TauriClipboardAdapter() : browserClipboard);
+  // Bug-report snapshot (2026-10 review §5.5): the native log tail in Tauri, a
+  // fixed stub in the browser.
+  const diagnostics: DiagnosticsPort =
+    overrides.diagnostics ?? (isTauri ? new TauriDiagnosticsAdapter() : new FakeDiagnosticsAdapter());
 
   return {
     useCases: {
@@ -105,15 +101,10 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
       captureScreenshot: new CaptureScreenshotUseCase(screenCapture),
       sendPrompt: new SendPromptUseCase(llm),
       manageApiKey: new ManageApiKeyUseCase(secrets),
-      recordConversation: new RecordConversationUseCase(conversations),
       transcribeAudio: new TranscribeAudioUseCase(audio),
+      getDiagnostics: new GetDiagnosticsUseCase(diagnostics),
     },
     platform: { overlay, hotkey, clipboard },
-    persistence: {
-      // Only the real SQLite path needs migrations; in-memory repos have no
-      // schema. Runs on startup (see main.tsx).
-      applyMigrations: storage ? () => applyMigrations(storage) : async () => {},
-    },
   };
 }
 
@@ -126,11 +117,21 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
  * Outside Tauri (`pnpm dev` in a plain browser, or tests), we fall back to the
  * DEV-ONLY OpenRouter webview adapter when a throwaway `VITE_OPENROUTER_API_KEY`
  * is explicitly provided (it exposes the key in the renderer). Otherwise: fakes.
+ *
+ * The dev branch is gated on `import.meta.env.DEV`, not only on the Tauri
+ * check: Vite inlines `VITE_*` values as string literals at build time, so an
+ * ungated reference would bake whatever key sits in `.env` on the build
+ * machine into the shipped bundle — even though the Tauri path never reads it
+ * (2026-10 review §2.2). With the gate the whole branch is dead code in a
+ * production build and is dropped; `vite.config.ts` additionally defines the
+ * variable away on `vite build`. Exported for that regression test only.
  */
-function selectLlm(isTauri: boolean): LlmPort {
+export function selectLlm(isTauri: boolean): LlmPort {
   if (isTauri) return new TauriLlmAdapter();
-  const devKey = import.meta.env.VITE_OPENROUTER_API_KEY;
-  if (devKey) return new OpenRouterLlmAdapter(devKey);
+  if (import.meta.env.DEV) {
+    const devKey = import.meta.env.VITE_OPENROUTER_API_KEY;
+    if (devKey) return new OpenRouterLlmAdapter(devKey);
+  }
   return new FakeLlmAdapter();
 }
 

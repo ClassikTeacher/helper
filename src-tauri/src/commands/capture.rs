@@ -7,7 +7,13 @@ use crate::AppState;
 /// under the mouse cursor (P0): on a multi-monitor setup the task is on the
 /// screen the user is looking at, not necessarily the primary one. Detection is
 /// best-effort — if it fails, the capturer falls back to the primary display.
-#[tauri::command]
+///
+/// `async`: a sync Tauri command runs on the MAIN thread, and this one does
+/// real work (WGC frame + BGRA→RGBA + area downscale + PNG encode of a
+/// 2560×1440 frame — hundreds of ms in debug), which froze the event loop
+/// (window drag, show/hide) for that long (2026-10 review §3.4). With the
+/// attribute it runs on the async runtime's pool instead.
+#[tauri::command(async)]
 pub fn capture_screen(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -17,7 +23,20 @@ pub fn capture_screen(
     if request.display_index.is_none() && request.display_name.is_none() {
         request.display_name = monitor_under_cursor(&app);
     }
-    state.capture.capture(&request)
+    let started = std::time::Instant::now();
+    let result = state.capture.capture(&request);
+    match &result {
+        Ok(shot) => log::info!(
+            "capture_screen: {}x{} ({} KB png) from {:?} in {} ms",
+            shot.width,
+            shot.height,
+            shot.image_base64.len() * 3 / 4 / 1024,
+            request.display_name.as_deref().unwrap_or("primary"),
+            started.elapsed().as_millis()
+        ),
+        Err(e) => log::warn!("capture_screen failed: {e}"),
+    }
+    result
 }
 
 /// OS device name of the monitor containing the cursor (physical coordinates).

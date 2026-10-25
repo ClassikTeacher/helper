@@ -11,6 +11,13 @@ interface MarkdownMessageProps {
  * Fenced blocks (`pre > code.language-x`) render as a highlighted CodeBlock
  * with a copy button; inline code keeps the default rendering. Raw HTML stays
  * disabled (no rehype-raw) — model output is untrusted (architecture.md §11).
+ *
+ * Links never navigate (2026-10 review §2.5): the HUD is a frameless overlay
+ * webview, and a click on a real `<a href>` would replace it with the external
+ * page — there is no address bar or back button, and the link may have been
+ * planted through the screenshot or the transcript (prompt injection → phishing
+ * inside a trusted-looking window). The link text and its URL are rendered as
+ * plain, selectable text instead; the user can copy a URL they actually want.
  */
 const COMPONENTS: Components = {
   pre({ children }) {
@@ -21,6 +28,18 @@ const COMPONENTS: Components = {
       return <CodeBlock code={code} {...(lang ? { lang } : {})} />;
     }
     return <pre>{children}</pre>;
+  },
+  a({ href, children }) {
+    const url = href ?? '';
+    const label = textOf(children);
+    // GFM autolinks have label === url: show it once.
+    const showUrl = url && label !== url;
+    return (
+      <span className="text-indigo-300 underline decoration-dotted" data-link-url={url || undefined}>
+        {label}
+        {showUrl ? <span className="text-neutral-500"> ({url})</span> : null}
+      </span>
+    );
   },
 };
 

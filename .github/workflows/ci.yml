@@ -1,0 +1,41 @@
+# Minimal regression net (2026-10 review §5.3). The project is not deployed,
+# so this runs only on pull requests (and by hand): typecheck + lint + Vitest
+# on Linux in ~2 minutes, and the Rust lib tests (incl. the contract-fixture
+# drift guard) on Windows — the app's real target. Delete the `native` job if
+# the Windows minutes are not worth it; the webview job alone already catches
+# most agent-written regressions.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  webview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # pnpm 10 skips dependency build scripts; Vite/Vitest need esbuild's binary.
+      - run: pnpm rebuild esbuild
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+
+  native:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: cargo test --lib --manifest-path src-tauri/Cargo.toml
