@@ -6,7 +6,6 @@ import { AnalyzeScreenshotUseCase } from '@/core/application/use-cases/analyze-s
 import { CaptureScreenshotUseCase } from '@/core/application/use-cases/capture-screenshot.use-case';
 import { SendPromptUseCase } from '@/core/application/use-cases/send-prompt.use-case';
 import { ManageApiKeyUseCase } from '@/core/application/use-cases/manage-api-key.use-case';
-import { RecordConversationUseCase } from '@/core/application/use-cases/record-conversation.use-case';
 import { TranscribeAudioUseCase } from '@/core/application/use-cases/transcribe-audio.use-case';
 
 import type { LlmPort } from '@/core/application/ports/llm.port';
@@ -15,8 +14,6 @@ import type { OverlayPort } from '@/core/application/ports/overlay.port';
 import type { HotkeyPort } from '@/core/application/ports/hotkey.port';
 import type { ClipboardPort } from '@/core/application/ports/clipboard.port';
 import type { SecretsPort } from '@/core/application/ports/secrets.port';
-import type { StoragePort } from '@/core/application/ports/storage.port';
-import type { ConversationRepository } from '@/core/application/ports/conversation.repository';
 import type { AudioTranscriptionPort } from '@/core/application/ports/audio-transcription.port';
 
 import { TauriScreenCaptureAdapter } from '@/infrastructure/tauri/tauri-screen-capture.adapter';
@@ -27,14 +24,10 @@ import { TauriSecretsAdapter } from '@/infrastructure/tauri/tauri-secrets.adapte
 import { TauriAudioAdapter } from '@/infrastructure/tauri/tauri-audio.adapter';
 import { TauriClipboardAdapter } from '@/infrastructure/tauri/tauri-clipboard.adapter';
 import { OpenRouterLlmAdapter } from '@/infrastructure/llm/openrouter-llm.adapter';
-import { TauriStorageAdapter } from '@/infrastructure/persistence/tauri-storage.adapter';
-import { SqliteConversationRepository } from '@/infrastructure/persistence/sqlite-conversation.repository';
-import { applyMigrations } from '@/infrastructure/persistence/migrations';
 import { FakeLlmAdapter } from '@/infrastructure/mocks/fake-llm.adapter';
 import { FakeScreenCaptureAdapter } from '@/infrastructure/mocks/fake-screen-capture.adapter';
 import { InMemorySecretsAdapter } from '@/infrastructure/mocks/in-memory-secrets.adapter';
 import { FakeAudioAdapter } from '@/infrastructure/mocks/fake-audio.adapter';
-import { InMemoryConversationRepository } from '@/infrastructure/mocks/in-memory-conversation.repository';
 
 import type { AppContainer, ContainerOverrides } from './container.types';
 
@@ -42,6 +35,11 @@ import type { AppContainer, ContainerOverrides } from './container.types';
  * Composition root — the ONLY place that knows concrete implementations.
  * In a Tauri window it wires native adapters + OpenRouter; in a plain browser
  * (`pnpm dev`) or tests it falls back to fakes. Any dependency can be overridden.
+ *
+ * Nothing here persists to disk: dialogs live in memory for the lifetime of
+ * the process (hud.store). The SQLite history of phase 4a was removed in the
+ * 2026-10 review (§2.4) — it stored other people's screen content in plain
+ * text with no reader, no retention and no viewer.
  */
 export function createContainer(overrides: ContainerOverrides = {}): AppContainer {
   const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -71,17 +69,6 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
     ...(transcriberConfig ? { transcriber: new ScreenTranscriber(llm, transcriberConfig) } : {}),
   });
 
-  // Persistence (phase 4). In a Tauri window the repositories run on real SQLite
-  // via tauri-plugin-sql; in a browser/tests they fall back to in-memory stores
-  // (no migrations needed there). `storage` is shared by both repositories so
-  // the whole app uses one connection pool.
-  const storage: StoragePort | null =
-    overrides.storage ?? (isTauri ? new TauriStorageAdapter() : null);
-
-  const conversations: ConversationRepository =
-    overrides.conversationRepository ??
-    (storage ? new SqliteConversationRepository(storage) : new InMemoryConversationRepository());
-
   // NB: agents (phase 5) are a fixed built-in catalog (`core/domain/agents-catalog.ts`),
   // not persisted/editable, so there is no AgentRepository to wire — the UI
   // selects between solver/reviewer and the runner builds the prompt (YAGNI).
@@ -97,15 +84,9 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
       captureScreenshot: new CaptureScreenshotUseCase(screenCapture),
       sendPrompt: new SendPromptUseCase(llm),
       manageApiKey: new ManageApiKeyUseCase(secrets),
-      recordConversation: new RecordConversationUseCase(conversations),
       transcribeAudio: new TranscribeAudioUseCase(audio),
     },
     platform: { overlay, hotkey, clipboard },
-    persistence: {
-      // Only the real SQLite path needs migrations; in-memory repos have no
-      // schema. Runs on startup (see main.tsx).
-      applyMigrations: storage ? () => applyMigrations(storage) : async () => {},
-    },
   };
 }
 

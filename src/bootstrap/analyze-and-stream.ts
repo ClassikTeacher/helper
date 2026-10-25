@@ -1,5 +1,4 @@
 import { useHudStore, type Dialog, type RunInfo } from '@/ui/store/hud.store';
-import { summarizeInvocation } from '@/core/application/services/agent-prompt';
 import {
   compactHistory,
   type ConversationTurn,
@@ -26,7 +25,7 @@ export interface AnalyzeAndStreamParams {
 }
 
 type RunUseCases = Pick<AppContainer['useCases'], 'analyzeScreenshot'> &
-  Partial<Pick<AppContainer['useCases'], 'recordConversation' | 'transcribeAudio'>>;
+  Partial<Pick<AppContainer['useCases'], 'transcribeAudio'>>;
 
 /**
  * Drives `AnalyzeScreenshotUseCase` and pipes its streamed deltas into the HUD
@@ -39,13 +38,13 @@ type RunUseCases = Pick<AppContainer['useCases'], 'analyzeScreenshot'> &
  *
  * The message continues the CURRENT dialog of its mode: the dialog so far is
  * replayed as context, and a successful answer is appended to it. A stopped or
- * failed run leaves the dialog as it was.
+ * failed run leaves the dialog as it was. Dialogs are in memory only — nothing
+ * is written to disk (2026-10 review §2.4).
  */
 export async function analyzeAndStream(useCases: RunUseCases, params: AnalyzeAndStreamParams): Promise<void> {
   const history = useHudStore.getState().dialogs[params.agent.id]?.turns ?? [];
   let sent: SentPrompt = { userText: '' };
-  const summary = summarizeInvocation(params);
-  await streamRun(useCases, {
+  await streamRun({
     agentId: params.agent.id,
     hint: params.instructions.trim(),
     // If loopback recording is active (phase 9), stop it and transcribe BEFORE
@@ -64,7 +63,6 @@ export async function analyzeAndStream(useCases: RunUseCases, params: AnalyzeAnd
         },
         onStatus: (status) => useHudStore.getState().setPhase(status),
       }),
-    summary,
     turn: (answer) => ({ ...sent, answer }),
     onSuccess: () => {
       // Clear the live inputs only now that they have been successfully
@@ -95,7 +93,7 @@ export async function askAndStream(
   if (!question) return;
   const history = useHudStore.getState().dialogs[params.agent.id]?.turns ?? [];
   let sent: SentPrompt = { userText: '' };
-  await streamRun(useCases, {
+  await streamRun({
     agentId: params.agent.id,
     hint: `↳ ${question}`,
     prepare: async () => '',
@@ -110,7 +108,6 @@ export async function askAndStream(
           sent = prompt;
         },
       }),
-    summary: `${params.agent.name} ↳ ${question}`,
     turn: (answer) => ({ ...sent, answer }),
     onSuccess: () => useHudStore.getState().setInstructions(''),
   });
@@ -118,15 +115,12 @@ export async function askAndStream(
 
 /**
  * Appends a completed exchange to the agent's dialog (starting one if there is
- * none) and keeps it bounded. Returns the dialog it was recorded under.
+ * none) and keeps it bounded.
  */
-function appendToDialog(agentId: AgentId, title: string, turn: ConversationTurn): Dialog {
+function appendToDialog(agentId: AgentId, turn: ConversationTurn): void {
   const current = useHudStore.getState().dialogs[agentId];
-  const dialog: Dialog = current
-    ? { ...current, turns: compactHistory([...current.turns, turn]) }
-    : { id: crypto.randomUUID(), title, turns: [turn] };
+  const dialog: Dialog = { turns: compactHistory([...(current?.turns ?? []), turn]) };
   useHudStore.getState().setDialog(agentId, dialog);
-  return dialog;
 }
 
 interface RunSpec {
@@ -140,8 +134,6 @@ interface RunSpec {
     prepared: string,
     hooks: { readonly signal: AbortSignal; readonly onFinish: (finish: LlmFinish) => void },
   ) => AsyncIterable<string>;
-  /** Stored as the conversation's prompt in history. */
-  readonly summary: string;
   /** The dialog turn for this message, given the completed answer. */
   readonly turn: (answer: string) => ConversationTurn;
   /** Extra bookkeeping after a successful answer (e.g. clearing the inputs). */
@@ -151,9 +143,9 @@ interface RunSpec {
 /**
  * The shared run lifecycle: one active run (P0), stream into the HUD, report
  * run info (R9/R19), wind down on Stop/supersede; on success, append the
- * exchange to the mode's dialog and persist it.
+ * exchange to the mode's in-memory dialog.
  */
-async function streamRun(useCases: RunUseCases, spec: RunSpec): Promise<void> {
+async function streamRun(spec: RunSpec): Promise<void> {
   // Exactly one active run (P0): starting this one aborts any run in flight.
   const signal = beginRun();
   try {
@@ -175,16 +167,8 @@ async function streamRun(useCases: RunUseCases, spec: RunSpec): Promise<void> {
     useHudStore.getState().finishStreaming();
 
     const answer = useHudStore.getState().answer;
-    const dialog = appendToDialog(spec.agentId, spec.summary, spec.turn(answer));
+    appendToDialog(spec.agentId, spec.turn(answer));
     spec.onSuccess();
-
-    // Persist the completed exchange under its dialog (phase 4). Best-effort:
-    // a storage failure must NOT break the answer already streamed to the user.
-    if (useCases.recordConversation && answer.trim()) {
-      await useCases.recordConversation
-        .execute({ prompt: spec.summary, answer, conversationId: dialog.id, title: dialog.title })
-        .catch((err) => console.error('Failed to persist conversation', err));
-    }
   } catch (err) {
     if (signal.aborted) return settleAborted(signal);
     useHudStore.getState().fail(err instanceof Error ? err.message : String(err));

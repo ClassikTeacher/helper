@@ -8,9 +8,23 @@ Desktop AI screen-assistant. **Hotkey → screenshot → analyze → stream answ
 - Dev setup & troubleshooting: [`docs/development-setup.md`](docs/development-setup.md)
 - Manual testing: [`docs/manual-testing.md`](docs/manual-testing.md)
 
+## Privacy of what is sent
+
+Screenshots (often of someone else's shared screen) and the interlocutor's voice
+transcript go through OpenRouter to an upstream provider. Every chat request
+carries `provider: { data_collection: "deny" }`, so OpenRouter routes only to
+providers whose published policy is not to store or train on prompts
+(`AI_HELPER_DATA_COLLECTION=allow` relaxes it; `AI_HELPER_ZDR=true` restricts
+further to zero-data-retention endpoints — fewer providers). Also turn off
+request logging in your OpenRouter account settings; that part is not under the
+app's control. The STT upload (`/audio/transcriptions`) carries no provider
+preference — unverified whether the endpoint accepts one.
+
 ## Stack
 
-Tauri v2 (Rust core) · React + Vite + TypeScript · Tailwind · Zustand · Vercel AI SDK + OpenRouter · SQLite + sqlite-vec.
+Tauri v2 (Rust core) · React + Vite + TypeScript · Tailwind · Zustand · OpenRouter called from
+native (`reqwest` + SSE; the Vercel AI SDK adapter is dev-only). No database: dialogs live in
+memory for the lifetime of the process and nothing is written to disk.
 
 ## Prerequisites
 
@@ -52,7 +66,7 @@ src/
   core/contracts   # IPC contract (the seam between webview and Rust)
   core/domain      # pure entities
   core/application # ports + use-cases + orchestration
-  infrastructure   # adapters (tauri / llm / persistence / mocks)
+  infrastructure   # adapters (tauri / llm / mocks)
   ui               # React (render only)
   bootstrap        # DI composition root
 src-tauri/         # Rust core (commands / ports / services / infra)

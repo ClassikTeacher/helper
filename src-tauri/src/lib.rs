@@ -74,9 +74,10 @@ pub fn run() {
         }));
     }
 
+    // No `tauri-plugin-sql`: the SQLite dialog history was removed (2026-10
+    // review §2.4) — dialogs are in-memory only and nothing is written to disk.
     builder
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_sql::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
         // R15: the paste-code hotkey reads the clipboard natively (a global
         // hotkey has no user gesture, so the webview Clipboard API can't).

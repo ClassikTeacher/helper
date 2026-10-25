@@ -302,18 +302,10 @@ describe('dialogs in the HUD flow', () => {
     expect(imagesIn(llm.requests[3]!)).toBe(0);
   });
 
-  it('persists every message of a dialog under one conversation', async () => {
-    const execute = vi.fn(async () => {});
-    const useCases = useCasesWith(scriptedLlm('A', 'B'), { recordConversation: { execute } as never });
-    await analyzeAndStream(useCases, { agent: AGENTS.solver, language: 'all', instructions: '', screenshots: [SHOT] });
-    useHudStore.setState({ instructions: 'q' });
-    await runSend(useCases);
-
-    const calls = execute.mock.calls as unknown as [{ conversationId: string; title: string }][];
-    expect(calls).toHaveLength(2);
-    expect(calls[1]![0].conversationId).toBe(calls[0]![0].conversationId);
-    expect(calls[1]![0].title).toBe(calls[0]![0].title);
-    expect(calls[0]![0].conversationId).toBe(useHudStore.getState().dialogs.solver?.id);
+  it('keeps dialogs in memory only — the container has no persistence slice', () => {
+    // 2026-10 review §2.4: nothing about a dialog is ever written to disk.
+    const container = useCasesWith(scriptedLlm('A'));
+    expect('recordConversation' in container).toBe(false);
   });
 });
 

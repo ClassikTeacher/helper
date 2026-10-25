@@ -33,13 +33,11 @@ export interface RunInfo {
 
 /**
  * A dialog of one mode: its messages so far, replayed as context for the next
- * one. In memory only — every app start begins with empty dialogs.
+ * one. In memory only — every app start begins with empty dialogs, and nothing
+ * is ever written to disk (the SQLite history was removed in the 2026-10
+ * review, §2.4: it kept other people's screen content in plain text).
  */
 export interface Dialog {
-  /** Conversation id the dialog is persisted under (SQLite history). */
-  readonly id: string;
-  /** Human-readable title — the summary of the dialog's first message. */
-  readonly title: string;
   /** Completed exchanges, oldest first, already compacted (`compactHistory`). */
   readonly turns: readonly ConversationTurn[];
 }

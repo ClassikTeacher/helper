@@ -45,6 +45,10 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 - [ ] **Remove key:** ⚙ → "Remove key" clears the keychain entry (`cmdkey /list` shows no `ai-helper` entry); the amber "No OpenRouter API key" banner returns
 - [ ] Cancelling mid-stream stops output
 
+### Privacy — provider data policy (2026-10)
+- [ ] Every model of the light/heavy chains still answers with the default `provider.data_collection=deny` (the OpenRouter activity log shows the served provider); if a chain model becomes unroutable, pick another provider/model rather than `AI_HELPER_DATA_COLLECTION=allow`
+- [ ] With `AI_HELPER_ZDR=true` at least the primary model answers (ZDR endpoints are fewer)
+
 ### Phase 3 — Model routing
 - [ ] A "vision" task and a "quick-answer" task hit different models (verify via OpenRouter dashboard/logs)
 
@@ -76,11 +80,7 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 - [ ] **New dialog:** "＋ Новый диалог" in Solve clears the Solve answer and context ("Новый диалог"); Review keeps its dialog and answer
 - [ ] **Restart:** after restarting the app both modes start with "Новый диалог"
 - [ ] **Prompt cache:** with an Anthropic primary model, the run-info line of the 2nd+ message in a dialog shows "кэш N" (needs the prompt over the model's caching minimum, e.g. a few screenshots); the OpenRouter activity log shows the cache read
-- [ ] **History:** the SQLite `messages` of one dialog share one `conversation_id`
-
-### Phase 4 — Context
-- [ ] History persists across app restarts
-- [ ] Relevant prior context is recalled
+- [ ] **Nothing on disk (2026-10):** after a few dialogs, the app config dir (`%APPDATA%\com.aihelper.app`) contains no `ai-helper.db` (an old one from before the change can be deleted by hand)
 
 ## Reporting a bug
 

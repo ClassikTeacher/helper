@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  buildAgentPrompt,
-  numberLines,
-  summarizeInvocation,
-} from '@/core/application/services/agent-prompt';
+import { buildAgentPrompt, numberLines } from '@/core/application/services/agent-prompt';
 import { AGENTS } from '@/core/domain/agents-catalog';
 
 describe('buildAgentPrompt', () => {
@@ -188,31 +184,5 @@ describe('agent catalog prompts', () => {
     expect(prompt).toContain('the transcript wins');
     expect(prompt).toContain('FIRST, in a fenced code block');
     expect(prompt).toContain('Не могу разобрать задачу');
-  });
-});
-
-describe('summarizeInvocation', () => {
-  it('summarizes the solver with language and instructions', () => {
-    expect(
-      summarizeInvocation({ agent: AGENTS.solver, language: 'ts', instructions: 'no deps' }),
-    ).toBe('Solve (TypeScript) — no deps');
-  });
-
-  it('drops the language when unspecified', () => {
-    expect(summarizeInvocation({ agent: AGENTS.solver, language: 'all', instructions: '' })).toBe(
-      'Solve',
-    );
-  });
-
-  it('marks that the code was sent as text', () => {
-    expect(
-      summarizeInvocation({ agent: AGENTS.reviewer, language: 'all', instructions: '', codeText: 'x' }),
-    ).toBe('Review [код текстом]');
-  });
-
-  it('never shows a language for the reviewer', () => {
-    expect(
-      summarizeInvocation({ agent: AGENTS.reviewer, language: 'java', instructions: '' }),
-    ).toBe('Review');
   });
 });

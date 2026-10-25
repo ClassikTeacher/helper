@@ -105,14 +105,10 @@ describe('analyzeAndStream: one active run (P0)', () => {
     expect(useHudStore.getState().stopped).toBe(false);
   });
 
-  it('Stop keeps the partial answer, marks it stopped, and keeps the inputs for a re-run', async () => {
+  it('Stop keeps the partial answer, marks it stopped, keeps the inputs and records no dialog turn', async () => {
     const llm = gatedLlm();
-    const record = vi.fn(async () => {});
     useHudStore.setState({ instructions: 'hint', codeText: 'code' });
-    const run = analyzeAndStream(
-      { ...useCasesWith(llm), recordConversation: { execute: record } as never },
-      { ...PARAMS, codeText: 'code' },
-    );
+    const run = analyzeAndStream(useCasesWith(llm), { ...PARAMS, codeText: 'code' });
     await tick();
     llm.release('part ');
     await tick();
@@ -127,7 +123,7 @@ describe('analyzeAndStream: one active run (P0)', () => {
     expect(state.stopped).toBe(true);
     expect(state.instructions).toBe('hint');
     expect(state.codeText).toBe('code');
-    expect(record).not.toHaveBeenCalled();
+    expect(state.dialogs.solver).toBeNull();
   });
 
   it('a send is ignored while the previous send is still transcribing', async () => {
