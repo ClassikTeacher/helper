@@ -20,10 +20,29 @@ request logging in your OpenRouter account settings; that part is not under the
 app's control. The STT upload (`/audio/transcriptions`) carries no provider
 preference — unverified whether the endpoint accepts one.
 
+## Settings (⚙)
+
+The settings panel (F2, 2026-10) has five tabs: **Ключ** (the OpenRouter API key +
+diagnostics), **Хоткеи**, **Модели** (the `light`/`heavy` chains and request profiles),
+**Аудио** (STT language/prompt, silence gate, recording window) and **Приватность**
+(OpenRouter data policy). Values are stored as a patch over the build defaults in
+`%APPDATA%\com.aihelper.app\settings.json` (`tauri-plugin-store`); fields the user
+never touched keep following `.env` (`VITE_*`), and "Сбросить к умолчанию" empties the
+patch. Hotkeys are re-registered on save, no restart. The API key is never in that file
+(OS keychain only).
+
+Default hotkeys are `Ctrl+Alt+Shift+<key>`: `H` show/hide HUD, `K` capture the monitor,
+`W` capture the active window, `Enter` send, `R` record, `P` code from the clipboard —
+chosen to stay out of the JetBrains/VS Code keymaps (changeable in ⚙).
+
+**Precedence** for audio/privacy values: native `AI_HELPER_*` env var (when set) →
+the settings screen → the built-in default.
+
 ## Native runtime overrides (`AI_HELPER_*`)
 
 Read by the Rust core at runtime (process environment) — unlike `VITE_*`, which
-are compiled into the webview. All optional.
+are compiled into the webview. All optional; a set variable wins over the matching
+value chosen in ⚙ (operator override).
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -38,6 +57,16 @@ are compiled into the webview. All optional.
 | `AI_HELPER_LLM_IDLE_TIMEOUT_MS` | `60000` | Longest silence between body chunks while streaming (keep-alive comments count) |
 | `AI_HELPER_DATA_COLLECTION` | `deny` | OpenRouter `provider.data_collection`; `allow` = default routing |
 | `AI_HELPER_ZDR` | unset | `true` routes only to zero-data-retention endpoints |
+
+## Tray
+
+The app is resident: the HUD starts hidden and the process lives in the system tray
+(F1, 2026-10). Left click toggles the HUD; the right-click menu has show/hide, "stop
+recording and send" (enabled only while recording), an autostart checkbox (the OS
+`Run` entry, via `tauri-plugin-autostart`) and quit. While loopback recording runs
+the tray icon carries a red dot and its tooltip counts the seconds — driven by the
+native recorder, so it cannot disagree with it. Closing the HUD window (Alt+F4)
+only hides it; "Выход" in the tray ends the process.
 
 ## Diagnostics and logs
 

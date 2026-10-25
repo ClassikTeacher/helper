@@ -202,6 +202,47 @@ enum Outcome {
     Rejected(String),
 }
 
+/// What one transcription is asked with, already resolved: `language` =
+/// the Whisper hint (`None` = let it detect), `prompt` = the vocabulary
+/// prompt (`None` = none). Built by [`SttOptions::resolve`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SttOptions {
+    pub language: Option<String>,
+    pub prompt: Option<String>,
+}
+
+impl SttOptions {
+    /// Precedence per field: the `AI_HELPER_STT_LANGUAGE`/`AI_HELPER_STT_PROMPT`
+    /// env vars (operator override), then the request's values (the settings
+    /// screen, F2), then the built-in defaults (`ru`, the vocabulary).
+    pub fn resolve(request_language: Option<&str>, request_prompt: Option<&str>) -> Self {
+        Self::resolve_with(
+            std::env::var(STT_LANGUAGE_ENV).ok().as_deref(),
+            std::env::var(STT_PROMPT_ENV).ok().as_deref(),
+            request_language,
+            request_prompt,
+        )
+    }
+
+    fn resolve_with(
+        env_language: Option<&str>,
+        env_prompt: Option<&str>,
+        request_language: Option<&str>,
+        request_prompt: Option<&str>,
+    ) -> Self {
+        Self {
+            language: resolve_language(first_set(env_language, request_language)),
+            prompt: resolve_prompt(first_set(env_prompt, request_prompt)),
+        }
+    }
+}
+
+/// The first non-blank value: env before request; blank = unset.
+fn first_set<'a>(env: Option<&'a str>, request: Option<&'a str>) -> Option<&'a str> {
+    let set = |v: Option<&'a str>| v.map(str::trim).filter(|v| !v.is_empty());
+    set(env).or_else(|| set(request))
+}
+
 pub struct SttClient {
     http: reqwest::Client,
 }
@@ -224,9 +265,8 @@ impl SttClient {
     /// [`STT_MAX_ATTEMPTS`]. A permanent error (auth, bad request, malformed
     /// body) stops immediately. `wav` is cloned per attempt (~≤2 MB at the 60 s
     /// cap), which is cheap relative to the upload.
-    pub async fn transcribe(&self, api_key: &str, wav: Vec<u8>) -> Result<String, String> {
-        let language = resolve_language(std::env::var(STT_LANGUAGE_ENV).ok().as_deref());
-        let mut prompt = resolve_prompt(std::env::var(STT_PROMPT_ENV).ok().as_deref());
+    pub async fn transcribe(&self, api_key: &str, wav: Vec<u8>, options: SttOptions) -> Result<String, String> {
+        let SttOptions { language, mut prompt } = options;
         let timeout = stt_timeout_for(
             stt_timeout(),
             wav.len(),
@@ -432,6 +472,25 @@ mod tests {
         for s in [400, 401, 403, 404, 422, 200] {
             assert!(!is_retryable_status(s), "{s} should NOT be retryable");
         }
+    }
+
+    #[test]
+    fn stt_options_env_wins_then_request_then_defaults() {
+        // Nothing set anywhere: the defaults.
+        let defaults = SttOptions::resolve_with(None, None, None, None);
+        assert_eq!(defaults.language.as_deref(), Some("ru"));
+        assert_eq!(defaults.prompt.as_deref(), Some(DEFAULT_STT_PROMPT));
+        // The request (settings screen) is used when the env is unset/blank.
+        let from_request = SttOptions::resolve_with(None, Some("  "), Some("en"), Some("off"));
+        assert_eq!(from_request.language.as_deref(), Some("en"));
+        assert_eq!(from_request.prompt, None);
+        // A set env var wins over the request, field by field.
+        let env_wins = SttOptions::resolve_with(Some("auto"), None, Some("en"), Some("Rust, borrow checker"));
+        assert_eq!(env_wins.language, None);
+        assert_eq!(env_wins.prompt.as_deref(), Some("Rust, borrow checker"));
+        // Blank request values mean "unset" → defaults.
+        let blank = SttOptions::resolve_with(None, None, Some(""), Some(" "));
+        assert_eq!(blank, defaults);
     }
 
     #[test]

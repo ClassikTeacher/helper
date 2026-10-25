@@ -37,9 +37,9 @@
 | 5.3 CI | `223124c` | `.github/workflows/ci.yml`: typecheck/lint/vitest на Linux + `cargo test --lib` на windows-latest по PR; нелинкуемый `tests/capture_service.rs` перенесён в unit-тест библиотеки |
 | 5.4 каталог моделей | — | **за пользователем:** `pnpm models:check` на машине с доступом к openrouter.ai (из среды агента недоступен), затем правка `AVAILABLE_MODELS`/`.env`; инструкция в README «Test» |
 | 5.5 диагностика | `c09f841` | `tauri-plugin-log` (ротация ~1 МБ), политика логирования (без ключа/промптов/транскриптов), логи capture/LLM/STT/навигации, проброс `console.error/warn` из webview, команда `diagnostics_snapshot`, ⚙ → «Copy diagnostics» |
-| §6 F1–F14 | план | подробный план в `tasks.md` «Фаза 13»; уже сделаны: F3 (`bee5618`), F4 (`2ed1d24`), F6 (`18dbeda`), F10 (`c09f841`), F12-минимум (`0b73740`), F8 частично (`feea81a`), F14 закрыта удалением истории (`f0b419a`) |
+| §6 F1–F14 | план + F1/F2/F5 | подробный план в `tasks.md` «Фаза 13»; сделаны: F1 трей (`6f50903`), F2 экран настроек (`3813d51`), F5 захват активного окна (`62c60c4`), F3 (`bee5618`), F4 (`2ed1d24`), F6 (`18dbeda`), F10 (`c09f841`), F12-минимум (`0b73740`), F8 частично (`feea81a`), F14 закрыта удалением истории (`f0b419a`) |
 
-Автотесты: TS 285/285; Rust 112 passed + 1 ignored (Windows-таргет под wine со stub-DLL); `pnpm build` зелёный. Ручные проверки — `manual-testing.md`, разделы «2026-10» (включая «Diagnostics»).
+Автотесты (после F1/F2/F5): TS 386/386; Rust 151 passed + 2 ignored (Windows-таргет под wine со stub-DLL); `pnpm build` зелёный. Ручные проверки — `manual-testing.md`, разделы «2026-10» (включая «Diagnostics», «Tray», «Active-window capture», «Settings screen»).
 
 ## 0. Коротко
 
@@ -442,7 +442,7 @@ architecture.md обновляются в том же PR, что меняет `i
 
 | Сделано | Частично | Закрыто иначе | Спланировано, не начато |
 |---|---|---|---|
-| F3 `bee5618`, F4 `2ed1d24`, F6 `18dbeda`, F10 `c09f841`, F12 (фикстуры) `0b73740` | F8: `secret_has`/`secret_delete` ✅ `feea81a`, «Проверить ключ» ⬜ | F14: истории на диске больше нет (`f0b419a`) — ретенция не нужна | F1, F2, F5, F7, F9, F11, F13; F12-максимум (`tauri-specta`) |
+| F1 `6f50903`, F2 `3813d51`, F3 `bee5618`, F4 `2ed1d24`, F5 `62c60c4`, F6 `18dbeda`, F10 `c09f841`, F12 (фикстуры) `0b73740` | F8: `secret_has`/`secret_delete` ✅ `feea81a`, «Проверить ключ» ⬜ | F14: истории на диске больше нет (`f0b419a`) — ретенция не нужна | F7, F9, F11, F13; F12-максимум (`tauri-specta`) |
 
 ---
 

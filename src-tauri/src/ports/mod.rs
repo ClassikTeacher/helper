@@ -1,10 +1,39 @@
 //! Ports (traits) — the replaceable seams inside the Rust core. Any concrete
 //! implementation in `infra/` can be swapped as long as it honors these traits.
 
-use crate::dto::{CaptureRequest, CaptureResult, OcrRequest, OcrResult};
+use crate::dto::{CaptureRegion, CaptureResult, OcrRequest, OcrResult};
+
+/// What `capture_screen` resolved a request to: the DTO's optional display
+/// fields and `target` become one explicit choice, so the capturer never
+/// guesses (and the fallback order lives in exactly one place — the command).
+#[derive(Debug, Clone, PartialEq)]
+pub enum CaptureTargetSpec {
+    /// scap's main display — the fallback when nothing better is known.
+    MainDisplay,
+    /// The Nth display (out of range is a hard error — the caller asked for it).
+    DisplayIndex(u32),
+    /// A display by OS device name (`\\.\DISPLAY2`), e.g. the monitor under
+    /// the cursor; an unknown name falls back to the main display.
+    DisplayName(String),
+    /// A top-level window by native handle (F5: the active window).
+    Window { hwnd: isize },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaptureSpec {
+    pub target: CaptureTargetSpec,
+    /// Optional sub-region of the target (physical pixels).
+    pub region: Option<CaptureRegion>,
+}
+
+impl CaptureSpec {
+    pub fn is_window(&self) -> bool {
+        matches!(self.target, CaptureTargetSpec::Window { .. })
+    }
+}
 
 pub trait ScreenCapturer: Send + Sync {
-    fn capture(&self, request: &CaptureRequest) -> Result<CaptureResult, String>;
+    fn capture(&self, spec: &CaptureSpec) -> Result<CaptureResult, String>;
 }
 
 /// Whether the local OCR is installed (phase 6) — from the files alone.
@@ -54,7 +83,9 @@ pub struct RecordedAudio {
 /// or a stop-without-start can't panic.
 pub trait AudioRecorder: Send + Sync {
     /// Begin capturing loopback audio, discarding anything previously buffered.
-    fn start(&self) -> Result<(), String>;
+    /// Keeps a rolling window of the last `window_secs` seconds (F2: chosen in
+    /// settings; the command resolves env > settings > default).
+    fn start(&self, window_secs: u32) -> Result<(), String>;
     /// Stop capturing. Buffered samples are retained until `take_audio`.
     fn stop(&self) -> Result<(), String>;
     /// Drain and return everything captured since `start`, clearing the buffer.

@@ -132,6 +132,32 @@ pub fn silence_threshold_from_env() -> Option<f32> {
     resolve_silence_threshold(std::env::var(SILENCE_DBFS_ENV).ok().as_deref())
 }
 
+/// The gate threshold for one transcription (F2): `AI_HELPER_STT_SILENCE_DBFS`
+/// when set (operator override), else the request's settings (`gate` off →
+/// `None`; on → `dbfs`, the default level when absent/invalid), else the
+/// default. Pure — unit-tested.
+pub fn resolve_silence_threshold_with(
+    env_raw: Option<&str>,
+    gate: Option<bool>,
+    dbfs: Option<f32>,
+) -> Option<f32> {
+    if let Some(raw) = env_raw.map(str::trim).filter(|v| !v.is_empty()) {
+        return resolve_silence_threshold(Some(raw));
+    }
+    if gate == Some(false) {
+        return None;
+    }
+    let level = dbfs
+        .filter(|d| d.is_finite() && *d <= 0.0)
+        .unwrap_or(DEFAULT_SILENCE_DBFS);
+    Some(dbfs_to_amplitude(level))
+}
+
+/// The raw `AI_HELPER_STT_SILENCE_DBFS` value, for [`resolve_silence_threshold_with`].
+pub fn silence_threshold_env_raw() -> Option<String> {
+    std::env::var(SILENCE_DBFS_ENV).ok()
+}
+
 /// `off` → `None` (gate disabled); a finite dBFS ≤ 0 → that level;
 /// unset/blank/invalid → the default. Pure — unit-tested.
 fn resolve_silence_threshold(raw: Option<&str>) -> Option<f32> {
@@ -293,6 +319,29 @@ mod tests {
     /// The default gate, as `prepare_stt_audio` takes it (`None` = off).
     fn threshold() -> Option<f32> {
         Some(gate())
+    }
+
+    #[test]
+    fn silence_threshold_with_request_env_wins_then_request_then_default() {
+        let default = Some(dbfs_to_amplitude(DEFAULT_SILENCE_DBFS));
+        assert_eq!(resolve_silence_threshold_with(None, None, None), default);
+        // Settings: gate off → no gate; gate on with a level → that level.
+        assert_eq!(resolve_silence_threshold_with(None, Some(false), Some(-40.0)), None);
+        assert_eq!(
+            resolve_silence_threshold_with(None, Some(true), Some(-40.0)),
+            Some(dbfs_to_amplitude(-40.0))
+        );
+        // An invalid level falls back to the default level, gate still on.
+        assert_eq!(resolve_silence_threshold_with(None, Some(true), Some(5.0)), default);
+        assert_eq!(resolve_silence_threshold_with(None, Some(true), Some(f32::NAN)), default);
+        // Env wins over the request: `off` disables, a level overrides.
+        assert_eq!(resolve_silence_threshold_with(Some("off"), Some(true), Some(-40.0)), None);
+        assert_eq!(
+            resolve_silence_threshold_with(Some("-30"), Some(false), None),
+            Some(dbfs_to_amplitude(-30.0))
+        );
+        // A blank env var is "unset".
+        assert_eq!(resolve_silence_threshold_with(Some("  "), Some(false), None), None);
     }
 
     #[test]

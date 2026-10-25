@@ -24,6 +24,8 @@ interface ImportMetaEnv {
   readonly VITE_TOGGLE_HUD_ACCELERATOR?: string;
   /** Capture-into-batch hotkey (phase 8). */
   readonly VITE_CAPTURE_ACCELERATOR?: string;
+  /** Capture the active window into the batch (F5). */
+  readonly VITE_CAPTURE_WINDOW_ACCELERATOR?: string;
   /** Send-batch-for-analysis hotkey (phase 8). */
   readonly VITE_SEND_ACCELERATOR?: string;
   /** Toggle-loopback-recording hotkey (phase 9). */

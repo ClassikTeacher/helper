@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Coordinates are PHYSICAL device pixels (matching the captured frame), not
 /// logical/CSS pixels — see the DPI caveat in `infra/scap_capturer.rs`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureRegion {
     pub x: u32,
@@ -26,6 +26,27 @@ pub struct CaptureRequest {
     /// monitor under the mouse cursor — the screen the user is working on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// What to capture when no explicit display is given (F5): the monitor
+    /// under the cursor (default) or the active window, which falls back to
+    /// the monitor when it cannot be captured — see `CaptureResult.source`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<CaptureTarget>,
+}
+
+/// Mirror of `CaptureTargetDto` in dto.ts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CaptureTarget {
+    CursorMonitor,
+    ActiveWindow,
+}
+
+/// What a capture actually came from. Mirror of `CaptureSourceDto` in dto.ts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CaptureSource {
+    Monitor,
+    Window,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +57,9 @@ pub struct CaptureResult {
     pub height: u32,
     /// Unix epoch milliseconds, UTC.
     pub captured_at: i64,
+    /// A whole monitor, or one window (F5). An active-window request that
+    /// fell back to the monitor reports `monitor`.
+    pub source: CaptureSource,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +147,28 @@ pub struct LlmStreamRequest {
     /// not cancellable (older webviews, tests).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// Provider data policy chosen in settings (F2). Absent = native's default
+    /// (`data_collection=deny`); `AI_HELPER_DATA_COLLECTION`/`AI_HELPER_ZDR`
+    /// override it per field either way (see `openrouter_client`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<ProviderPreference>,
+}
+
+/// Mirror of `DataCollectionDto` in dto.ts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DataCollection {
+    Deny,
+    Allow,
+}
+
+/// OpenRouter provider preference from the settings screen (F2). Mirror of
+/// `ProviderPreferenceDto` in dto.ts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderPreference {
+    pub data_collection: DataCollection,
+    pub zdr: bool,
 }
 
 /// Payload of `llm_cancel`.
@@ -203,12 +249,42 @@ pub struct SecretSetRequest {
 // The recorded audio itself never crosses the seam — only the text. Mirror of
 // `TranscribeResultDto` in dto.ts.
 
+/// Optional payload of `audio_start_capture` (F2): the rolling window chosen
+/// in settings. `AI_HELPER_MAX_RECORDING_SECS` still wins when set. Mirror of
+/// `AudioStartRequestDto` in dto.ts.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioStartRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_secs: Option<u32>,
+}
+
 /// Result of `audio_start_capture`: the rolling window the recording keeps
 /// (the LAST `max_seconds`), so the HUD can tell the user.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioStartResult {
     pub max_seconds: u32,
+}
+
+/// Optional payload of `transcribe_audio` (F2): STT options from settings.
+/// Every field is optional and the matching `AI_HELPER_STT_*` env var wins
+/// over it. Mirror of `TranscribeRequestDto` in dto.ts.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscribeRequest {
+    /// Whisper language hint (`ru`, `en`, …); `auto` = no hint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    /// Vocabulary prompt; empty = the built-in vocabulary, `off` = none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    /// `false` uploads the clip exactly as recorded (gate off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub silence_gate: Option<bool>,
+    /// Gate level in dBFS (≤ 0) when the gate is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub silence_dbfs: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -231,6 +307,16 @@ pub struct DiagnosticsSnapshot {
     pub log_path: String,
     /// The last lines of that file (no secrets/prompts/transcripts are ever logged).
     pub log_tail: String,
+}
+
+// --- Tray (F1, 2026-10) ------------------------------------------------------
+/// Payload of the `tray://action` event (native → webview): a tray-menu
+/// action whose handling lives in the webview ("stop-recording" = stop and
+/// send, phase 9). Mirror of `TrayActionPayloadDto` in dto.ts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayActionPayload {
+    pub action: String,
 }
 
 #[cfg(test)]

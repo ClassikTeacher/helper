@@ -256,4 +256,20 @@ describe('dedupeModels', () => {
   it('preserves order and drops empties and duplicates', () => {
     expect(dedupeModels(['a', '', 'a', 'b', 'a', 'c'])).toEqual(['a', 'b', 'c']);
   });
+
+  it('reads the routes from a function on every request (settings changed in ⚙, F2)', async () => {
+    const inner = new ScriptedLlm({ A: [text('a '), finish()], B: [text('b '), finish()] });
+    let routes: RouteProfiles = {
+      light: { chain: ['A'], maxImageEdge: 1568 },
+      heavy: { chain: ['A'], maxImageEdge: 1568 },
+    };
+    const llm = new ResilientLlm(inner, () => routes);
+
+    await collect(llm.stream({ messages: [] }));
+    routes = { light: { chain: ['B'], maxImageEdge: 2000 }, heavy: { chain: ['B'], maxImageEdge: 2000 } };
+    const chunks = await collect(llm.stream({ messages: [] }));
+
+    expect(inner.attempts).toEqual(['A', 'B']);
+    expect(chunks).toEqual([text('b '), served('B')]);
+  });
 });

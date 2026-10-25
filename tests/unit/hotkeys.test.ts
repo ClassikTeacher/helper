@@ -4,9 +4,11 @@ import {
   unregisterHotkeys,
   TOGGLE_HUD_ACCELERATOR,
   CAPTURE_ACCELERATOR,
+  CAPTURE_WINDOW_ACCELERATOR,
   SEND_ACCELERATOR,
   RECORD_ACCELERATOR,
   PASTE_CODE_ACCELERATOR,
+  WINDOW_FALLBACK_NOTICE,
 } from '@/bootstrap/hotkeys';
 import { CaptureScreenshotUseCase } from '@/core/application/use-cases/capture-screenshot.use-case';
 import { AnalyzeScreenshotUseCase } from '@/core/application/use-cases/analyze-screenshot.use-case';
@@ -93,7 +95,7 @@ function createContainer(
   clipboard: ClipboardPort = createFakeClipboard(),
 ): Pick<AppContainer, 'platform' | 'useCases'> {
   return {
-    platform: { hotkey, overlay, clipboard },
+    platform: { hotkey, overlay, clipboard, tray: { onAction: async () => () => {} } },
     useCases: { captureScreenshot, analyzeScreenshot, transcribeAudio } as AppContainer['useCases'],
   };
 }
@@ -117,7 +119,7 @@ beforeEach(() => {
 });
 
 describe('registerHotkeys', () => {
-  it('registers the toggle, capture, send, record, and paste-code accelerators', async () => {
+  it('registers the toggle, capture, capture-window, send, record, and paste-code accelerators', async () => {
     const hotkey = new FakeHotkeyPort();
     const overlay = createFakeOverlay();
 
@@ -126,10 +128,64 @@ describe('registerHotkeys', () => {
     expect(hotkey.registered).toEqual([
       TOGGLE_HUD_ACCELERATOR,
       CAPTURE_ACCELERATOR,
+      CAPTURE_WINDOW_ACCELERATOR,
       SEND_ACCELERATOR,
       RECORD_ACCELERATOR,
       PASTE_CODE_ACCELERATOR,
     ]);
+  });
+
+  it('capture-window hotkey stages a shot of the active window and shows the HUD (F5)', async () => {
+    const hotkey = new FakeHotkeyPort();
+    const overlay = createFakeOverlay();
+    const screenCapture = new FakeScreenCaptureAdapter();
+    const captureSpy = vi.spyOn(screenCapture, 'capture');
+    await registerHotkeys(
+      createContainer(hotkey, overlay, new CaptureScreenshotUseCase(screenCapture)),
+    );
+
+    hotkey.press(CAPTURE_WINDOW_ACCELERATOR);
+    await flush();
+
+    expect(captureSpy).toHaveBeenCalledWith({ target: 'active-window' });
+    expect(useHudStore.getState().screenshots.map((s) => s.source)).toEqual(['window']);
+    expect(useHudStore.getState().notice).toBeNull();
+    expect(overlay.show).toHaveBeenCalled();
+  });
+
+  it('capture-window hotkey keeps the monitor fallback native took, but says so', async () => {
+    const hotkey = new FakeHotkeyPort();
+    const overlay = createFakeOverlay();
+    // Native found no capturable window (none / minimized / the HUD) and
+    // captured the monitor under the cursor instead.
+    const monitorOnly = {
+      capture: async () => ({ imageBase64: 'x', width: 4, height: 2, capturedAt: 1, source: 'monitor' as const }),
+    };
+    await registerHotkeys(
+      createContainer(hotkey, overlay, new CaptureScreenshotUseCase(monitorOnly)),
+    );
+
+    hotkey.press(CAPTURE_WINDOW_ACCELERATOR);
+    await flush();
+
+    expect(useHudStore.getState().screenshots).toHaveLength(1);
+    expect(useHudStore.getState().notice).toBe(WINDOW_FALLBACK_NOTICE);
+    expect(useHudStore.getState().error).toBeNull();
+  });
+
+  it('the plain capture hotkey asks for the cursor monitor', async () => {
+    const hotkey = new FakeHotkeyPort();
+    const screenCapture = new FakeScreenCaptureAdapter();
+    const captureSpy = vi.spyOn(screenCapture, 'capture');
+    await registerHotkeys(
+      createContainer(hotkey, createFakeOverlay(), new CaptureScreenshotUseCase(screenCapture)),
+    );
+
+    hotkey.press(CAPTURE_ACCELERATOR);
+    await flush();
+
+    expect(captureSpy).toHaveBeenCalledWith({ target: 'cursor-monitor' });
+    expect(useHudStore.getState().screenshots.map((s) => s.source)).toEqual(['monitor']);
   });
 
   it('paste-code hotkey stages the clipboard text as code and shows the HUD (R15)', async () => {
@@ -538,15 +594,18 @@ describe('registerHotkeys', () => {
 });
 
 describe('unregisterHotkeys', () => {
-  it('unregisters all five accelerators', async () => {
+  it('unregisters all six accelerators', async () => {
     const hotkey = new FakeHotkeyPort();
     const overlay = createFakeOverlay();
 
-    await unregisterHotkeys({ platform: { hotkey, overlay, clipboard: createFakeClipboard() } });
+    await unregisterHotkeys({
+      platform: { hotkey, overlay, clipboard: createFakeClipboard(), tray: { onAction: async () => () => {} } },
+    });
 
     expect(hotkey.unregistered).toEqual([
       TOGGLE_HUD_ACCELERATOR,
       CAPTURE_ACCELERATOR,
+      CAPTURE_WINDOW_ACCELERATOR,
       SEND_ACCELERATOR,
       RECORD_ACCELERATOR,
       PASTE_CODE_ACCELERATOR,

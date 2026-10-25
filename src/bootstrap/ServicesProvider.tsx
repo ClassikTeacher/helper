@@ -1,7 +1,7 @@
 import { createContext, useEffect, useMemo, type ReactNode } from 'react';
 import { createContainer } from './container';
-import { registerHotkeys, unregisterHotkeys } from './hotkeys';
-import { useHudStore } from '@/ui/store/hud.store';
+import { installHotkeys } from './install-hotkeys';
+import { installTrayActions } from './tray-actions';
 import type { AppContainer, ContainerOverrides } from './container.types';
 
 export const ServicesContext = createContext<AppContainer | null>(null);
@@ -28,19 +28,23 @@ export function ServicesProvider({ children, container, overrides }: ServicesPro
   );
 
   useEffect(() => {
-    registerHotkeys(value).catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error('Failed to register global hotkeys', err);
-      // No tray/notification yet (tasks.md phase 0.3) — surface the failure by
-      // showing the HUD itself, otherwise the user has no way to find out a
-      // main entry point (a hotkey) is silently non-functional.
-      useHudStore.getState().setHotkeyError(message);
-      void value.platform.overlay.show();
-    });
-    return () => {
-      unregisterHotkeys(value).catch((err) => {
-        console.error('Failed to unregister global hotkeys', err);
+    // F1: tray-menu actions (stop recording = send) share the hotkey paths.
+    let disposed = false;
+    let disposeTray: (() => void) | null = null;
+    installTrayActions(value)
+      .then((dispose) => {
+        if (disposed) dispose();
+        else disposeTray = dispose;
+      })
+      .catch((err) => {
+        console.error('Failed to subscribe to tray actions', err);
       });
+    // Hotkeys follow the settings (F2): registered now, re-registered on save.
+    const disposeHotkeys = installHotkeys(value, value.useCases.manageSettings);
+    return () => {
+      disposed = true;
+      disposeTray?.();
+      disposeHotkeys();
     };
   }, [value]);
 

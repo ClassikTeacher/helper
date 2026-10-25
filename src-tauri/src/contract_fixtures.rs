@@ -64,6 +64,7 @@ fn samples() -> Vec<Sample> {
                 region: Some(region.clone()),
                 display_index: Some(1),
                 display_name: Some(r"\\.\DISPLAY2".to_string()),
+                target: Some(CaptureTarget::ActiveWindow),
             },
         ),
         sample(
@@ -74,6 +75,7 @@ fn samples() -> Vec<Sample> {
                 width: 1568,
                 height: 882,
                 captured_at: 1_700_000_000_000,
+                source: CaptureSource::Window,
             },
         ),
         sample(
@@ -127,6 +129,10 @@ fn samples() -> Vec<Sample> {
                 reasoning_effort: Some("medium".to_string()),
                 max_image_edge: Some(1568),
                 request_id: Some("req-1".to_string()),
+                provider: Some(ProviderPreference {
+                    data_collection: DataCollection::Deny,
+                    zdr: true,
+                }),
             },
         ),
         sample(
@@ -190,12 +196,36 @@ fn samples() -> Vec<Sample> {
                 value: "sk-or-v1-sample".to_string(),
             },
         ),
+        sample(
+            "audioStartRequest",
+            "AudioStartRequestDto",
+            &AudioStartRequest {
+                window_secs: Some(90),
+            },
+        ),
         sample("audioStartResult", "AudioStartResultDto", &AudioStartResult { max_seconds: 60 }),
+        sample(
+            "transcribeRequest",
+            "TranscribeRequestDto",
+            &TranscribeRequest {
+                language: Some("en".to_string()),
+                prompt: Some("off".to_string()),
+                silence_gate: Some(true),
+                silence_dbfs: Some(-45.0),
+            },
+        ),
         sample(
             "transcribeResult",
             "TranscribeResultDto",
             &TranscribeResult {
                 text: "привет".to_string(),
+            },
+        ),
+        sample(
+            "trayActionPayload",
+            "TrayActionPayloadDto",
+            &TrayActionPayload {
+                action: "stop-recording".to_string(),
             },
         ),
         sample(

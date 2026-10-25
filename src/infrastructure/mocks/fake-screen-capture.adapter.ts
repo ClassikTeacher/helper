@@ -11,7 +11,14 @@ const TINY_PNG =
 export class FakeScreenCaptureAdapter implements ScreenCapturePort {
   constructor(private readonly imageBase64 = TINY_PNG) {}
 
-  async capture(_options?: CaptureOptions): Promise<Screenshot> {
-    return { imageBase64: this.imageBase64, width: 1, height: 1, capturedAt: Date.now() };
+  async capture(options?: CaptureOptions): Promise<Screenshot> {
+    return {
+      imageBase64: this.imageBase64,
+      width: 1,
+      height: 1,
+      capturedAt: Date.now(),
+      // Like native on a good day: a window when one was asked for.
+      source: options?.target === 'active-window' ? 'window' : 'monitor',
+    };
   }
 }

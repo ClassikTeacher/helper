@@ -17,9 +17,9 @@ use scap::{
     get_all_targets, is_supported, Target,
 };
 
-use crate::dto::{CaptureRegion, CaptureRequest, CaptureResult};
+use crate::dto::{CaptureRegion, CaptureResult, CaptureSource};
 use crate::infra::image::{downscale_to_long_edge, encode_png, MAX_CAPTURE_LONG_EDGE_PX};
-use crate::ports::ScreenCapturer;
+use crate::ports::{CaptureSpec, CaptureTargetSpec, ScreenCapturer};
 
 pub struct ScapCapturer;
 
@@ -36,12 +36,12 @@ impl Default for ScapCapturer {
 }
 
 impl ScreenCapturer for ScapCapturer {
-    fn capture(&self, request: &CaptureRequest) -> Result<CaptureResult, String> {
+    fn capture(&self, spec: &CaptureSpec) -> Result<CaptureResult, String> {
         if !is_supported() {
             return Err("screen capture is not supported on this platform build".to_string());
         }
 
-        let target = select_target(request.display_index, request.display_name.as_deref())?;
+        let target = select_target(&spec.target)?;
 
         let options = Options {
             fps: 1,
@@ -75,7 +75,7 @@ impl ScreenCapturer for ScapCapturer {
         };
 
         let (crop_width, crop_height, rgba) =
-            bgra_to_rgba(width, height, &bgra, request.region.as_ref())?;
+            bgra_to_rgba(width, height, &bgra, spec.region.as_ref())?;
         // Cap at the largest size any model uses (R4/R17): a 4K frame is
         // area-downscaled once here; the per-request cap (route/model
         // specific) is applied later in `llm_stream`. 2560×1440 passes as-is.
@@ -88,38 +88,42 @@ impl ScreenCapturer for ScapCapturer {
             width: out_width,
             height: out_height,
             captured_at: now_millis(),
+            source: if spec.is_window() { CaptureSource::Window } else { CaptureSource::Monitor },
         })
     }
 }
 
-/// Pick the capture target. An explicit `display_index` selects the Nth
-/// display (out-of-range is a hard error — the caller asked for it). Otherwise
-/// `display_name` (the monitor under the cursor, resolved by `capture_screen`)
-/// is matched against the displays' device names; no match, or no name, falls
-/// back to scap's main display (`None`) — cursor detection is best-effort.
-fn select_target(
-    display_index: Option<u32>,
-    display_name: Option<&str>,
-) -> Result<Option<Target>, String> {
+/// Pick the capture target. A display index selects the Nth display
+/// (out-of-range is a hard error — the caller asked for it); a display name
+/// (the monitor under the cursor, resolved by `capture_screen`) is matched
+/// against the displays' device names, and no match falls back to scap's main
+/// display (`None`) — cursor detection is best-effort. A window handle (F5)
+/// must be among the windows the capture API enumerates (visible, titled
+/// top-level windows); anything else is an error the command turns into a
+/// monitor capture.
+fn select_target(target: &CaptureTargetSpec) -> Result<Option<Target>, String> {
     let displays = || {
         get_all_targets()
             .into_iter()
             .filter(|t| matches!(t, Target::Display(_)))
             .collect::<Vec<_>>()
     };
-    if let Some(idx) = display_index {
-        return displays()
+    match target {
+        CaptureTargetSpec::MainDisplay => Ok(None),
+        CaptureTargetSpec::DisplayIndex(idx) => displays()
             .into_iter()
-            .nth(idx as usize)
+            .nth(*idx as usize)
             .map(Some)
-            .ok_or_else(|| format!("display index {idx} out of range"));
+            .ok_or_else(|| format!("display index {idx} out of range")),
+        CaptureTargetSpec::DisplayName(name) => Ok(displays()
+            .into_iter()
+            .find(|t| matches!(t, Target::Display(d) if same_device(&d.title, name)))),
+        CaptureTargetSpec::Window { hwnd } => get_all_targets()
+            .into_iter()
+            .find(|t| matches!(t, Target::Window(w) if w.raw_handle.0 as isize == *hwnd))
+            .map(Some)
+            .ok_or_else(|| format!("window {hwnd:#x} is not capturable (not a visible top-level window)")),
     }
-    let Some(name) = display_name else {
-        return Ok(None);
-    };
-    Ok(displays()
-        .into_iter()
-        .find(|t| matches!(t, Target::Display(d) if same_device(&d.title, name))))
 }
 
 /// Whether two OS display device names are the same (case-insensitive —

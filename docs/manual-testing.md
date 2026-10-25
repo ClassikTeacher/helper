@@ -33,9 +33,9 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 
 - [ ] With no key configured yet, the HUD shows an amber "No OpenRouter API key configured — click ⚙ to add one" banner
 - [ ] Entering a key in the ⚙ settings panel and saving shows "Key configured ✓"; the banner disappears after reopening/re-reading status
-- [ ] Pressing the CAPTURE hotkey (`Ctrl+Alt+S` by default — `Shift+S` is often claimed by screenshot tools; override via `VITE_CAPTURE_ACCELERATOR`) captures a screenshot, shows the HUD, and adds it to the batch strip — it does **NOT** analyze yet (phase 8, decoupled capture/send)
+- [ ] Pressing the CAPTURE hotkey (`Ctrl+Alt+Shift+K` by default — changeable in ⚙ → Хоткеи, pre-seeded via `VITE_CAPTURE_ACCELERATOR`) captures a screenshot, shows the HUD, and adds it to the batch strip — it does **NOT** analyze yet (phase 8, decoupled capture/send)
 - [ ] Pressing CAPTURE 1–5 times stacks thumbnails in the strip with a "N/5" counter; a 6th press does not add a 6th (cap); individual "✕" removes a shot, "Очистить всё" clears the batch
-- [ ] Pressing the SEND hotkey (`Ctrl+Alt+Enter` by default; override via `VITE_SEND_ACCELERATOR`) — or clicking Run — analyzes the whole staged batch at once and **streams an analysis** (main scenario, plan.md §4); the now-visible HUD itself never shows up in the analyzed images (content-protected)
+- [ ] Pressing the SEND hotkey (`Ctrl+Alt+Shift+Enter` by default; ⚙ → Хоткеи / `VITE_SEND_ACCELERATOR`) — or clicking Run — analyzes the whole staged batch at once and **streams an analysis** (main scenario, plan.md §4); the now-visible HUD itself never shows up in the analyzed images (content-protected)
 - [ ] Tokens stream progressively into the HUD (not all at once)
 - [ ] Pressing SEND / Run with an empty batch (and no code text) shows "Нет данных для анализа — сделайте хотя бы один скриншот (хоткей захвата) или вставьте код текстом." instead of silently capturing
 - [ ] Works for BOTH agents: repeat capture→send with Solve and with Review selected in the HUD
@@ -62,8 +62,8 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 - [ ] Failover: with an unroutable primary (e.g. `VITE_DEFAULT_MODEL=anthropic/does-not-exist` in `.env`, rebuild) the answer still arrives from the next model of the chain, and the native log shows the retryable error followed by the second `llm_stream: model=…` line
 
 ### Agent improvements (R9–R19, 2026-09)
-- [ ] **Code as text (R15):** select code in the editor, `Ctrl+C`, press `Ctrl+Alt+X` (override `VITE_PASTE_CODE_ACCELERATOR`) — the HUD shows "Код: N строк"; SEND answers from the text (reviewer cites `стр. N` matching the editor lines)
-- [ ] `Ctrl+Alt+X` with an image on the clipboard shows "Буфер обмена не содержит текста…" and does NOT stop a running recording/answer
+- [ ] **Code as text (R15):** select code in the editor, `Ctrl+C`, press `Ctrl+Alt+Shift+P` (⚙ → Хоткеи / `VITE_PASTE_CODE_ACCELERATOR`) — the HUD shows "Код: N строк"; SEND answers from the text (reviewer cites `стр. N` matching the editor lines)
+- [ ] The paste-code hotkey with an image on the clipboard shows "Буфер обмена не содержит текста…" and does NOT stop a running recording/answer
 - [ ] "{ } Код текстом" toggle: paste code by hand, Run with no screenshots → a text-only answer (no capture happens); the field is cleared after a successful run, kept after a failed one
 - [ ] **Run info (R9/R19):** under the answer a small line shows the model, `in→out tok` and `$cost`; with the primary model made unavailable (e.g. a bogus `VITE_LIGHT_MODEL`) the line turns amber "резервная модель · …"
 - [ ] **Routes (R11/R16):** with `VITE_HEAVY_MODEL`/`VITE_HEAVY_REASONING=medium` set, a Review request reaches that model (OpenRouter activity log) and a Solve request does not; one live request confirms the provider accepts the parameters (no HTTP 400)
@@ -103,6 +103,40 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 - [ ] A Solve task whose statement is in Russian: the answer understands the statement (Cyrillic model); with `--no-cyrillic` install it still answers from the screenshot
 - [ ] Rename the OCR folder: the answer still arrives (from the screenshots) and an amber line under it says "Код не распознан… `pnpm ocr:fetch`"; restore the folder — the next request uses OCR again without restarting the app
 - [ ] `VITE_TRANSCRIBE_ENGINE=cloud` brings back the model-call transcription (two requests in the activity log)
+
+### Active-window capture (F5, 2026-10)
+- [ ] With the IDE focused, press `Ctrl+Alt+Shift+W` (⚙ → Хоткеи / `VITE_CAPTURE_WINDOW_ACCELERATOR`): the HUD shows and the strip gets a thumbnail marked "окно" containing only the IDE window (no second monitor, taskbar or chat); SEND answers from it as usual
+- [ ] On a 2-monitor setup the shot is the window even when the cursor is on the other monitor
+- [ ] Click into the HUD so it is the foreground window, press the capture-window hotkey: the strip gets a monitor shot (no "окно" badge) and the amber note "Активное окно недоступно для захвата — снят монитор под курсором." appears
+- [ ] Minimize the IDE (focus lands elsewhere) and press the capture-window hotkey on an empty desktop: a monitor shot + the same note; no error banner
+- [ ] The native log shows `capture_screen: Window WxH (… KB png) from … in … ms` for a window shot and `no capturable foreground window` / `active window capture failed` lines for the fallbacks
+
+### Settings screen (F2, 2026-10)
+> ⚙ has tabs: Ключ (API key + diagnostics), Хоткеи, Модели, Аудио, Приватность. Settings are
+> saved to `%APPDATA%\com.aihelper.app\settings.json` as a patch over the build defaults
+> (`.env`); native `AI_HELPER_*` env vars still override the audio/privacy values.
+
+- [ ] **Хоткеи:** change "Скриншот монитора" to `Ctrl+Alt+Shift+1` (type it, or press ⌨ and the keys), Сохранить → "Сохранено ✓"; the new combination captures immediately, the old one does nothing; after an app restart the new one still works
+- [ ] The ⌨ capture works on a Cyrillic layout (press Ctrl+Alt+Shift+К → `CommandOrControl+Alt+Shift+K`)
+- [ ] Enter a combination another app already owns (e.g. one of ShareX's): Сохранить → the HUD shows the amber "Не удалось зарегистрировать глобальный хоткей" banner; choosing a free one clears it
+- [ ] A duplicate (two actions, same combination) or a bare `Shift+K` shows an inline error and Сохранить stays disabled
+- [ ] **Модели:** put a non-existent slug first in the light chain, save, send a Solve question — the answer still comes from the next model and the run-info line marks the fallback; restore the chain
+- [ ] **Аудио:** language `en`, prompt `off`, gate off, window 20 s — record 30 s of speech and send: the native log shows `audio_start_capture: rolling window 20 s` and the HUD says only the last 20 s are sent; the transcript is in English
+- [ ] **Приватность:** data collection `allow`, save, send — the native log line `llm_stream: … data_collection=allow zdr=false` reflects it; set `AI_HELPER_DATA_COLLECTION=deny` in the environment and restart — the log shows `deny` regardless of the setting (env wins)
+- [ ] "Сбросить к умолчанию" returns every tab to the build defaults and `settings.json` shrinks to `{"settings":{"schemaVersion":1}}`
+- [ ] `pnpm dev` in a browser: the tabs work, saving keeps the values for the page's lifetime (in-memory), nothing is written
+
+### Tray (F1, 2026-10)
+> The app is resident: the HUD starts hidden and the process lives in the system tray.
+
+- [ ] After start a tray icon (the app icon) appears; hovering shows "AI-Helper"; left click shows the HUD, a second left click hides it
+- [ ] Right click opens the menu: "Показать / скрыть HUD", "Остановить запись и отправить" (disabled), "Запускать при входе в систему" (checkbox), "Выход"
+- [ ] Start a recording (hotkey or ● button), hide the HUD: within ~1 s the tray icon gets a red dot and the tooltip reads "AI-Helper — запись 0:0N", counting up; "Остановить запись и отправить" becomes enabled
+- [ ] Click "Остановить запись и отправить": the HUD comes up, the recording stops, the transcript is attached and the answer streams (same as the record hotkey's second press); the red dot disappears and the menu item is disabled again
+- [ ] Stopping from the HUD (■ Стоп / hotkey) also clears the red dot
+- [ ] Alt+F4 on the HUD only hides it (the tray icon stays, the hotkeys still work); "Выход" ends the process (no `AI-Helper` left in Task Manager)
+- [ ] "Запускать при входе в систему": checked → `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` gains an `AI-Helper` entry (or Task Manager → Startup lists it); after sign-out/sign-in the tray icon is there; unchecking removes the entry
+- [ ] The native log shows `tray: installed (autostart on|off)` and `tray: quit`
 
 ### Diagnostics (2026-10)
 > Native writes a log file (`tauri-plugin-log`): `%LOCALAPPDATA%\com.aihelper.app\logs\ai-helper.log`

@@ -13,7 +13,10 @@ use futures_util::StreamExt;
 use serde_json::{json, Value};
 use tauri::ipc::Channel;
 
-use crate::dto::{LlmChunk, LlmContentPart, LlmMessage, LlmRole, LlmStreamRequest, LlmUsage};
+use crate::dto::{
+    DataCollection, LlmChunk, LlmContentPart, LlmMessage, LlmRole, LlmStreamRequest, LlmUsage,
+    ProviderPreference,
+};
 
 const OPENROUTER_CHAT_COMPLETIONS_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -130,29 +133,73 @@ impl Default for ProviderPolicy {
 }
 
 impl ProviderPolicy {
-    /// The policy from the process environment (see the `*_ENV` constants).
+    /// The policy from the process environment alone (see the `*_ENV`
+    /// constants): the env overrides applied to the default.
     pub fn from_env() -> Self {
-        resolve_provider_policy(
+        PolicyOverrides::from_env().apply(ProviderPolicy::default())
+    }
+}
+
+impl From<&ProviderPreference> for ProviderPolicy {
+    fn from(preference: &ProviderPreference) -> Self {
+        Self {
+            deny_data_collection: preference.data_collection == DataCollection::Deny,
+            zdr: preference.zdr,
+        }
+    }
+}
+
+/// Per-field env overrides (`AI_HELPER_DATA_COLLECTION`, `AI_HELPER_ZDR`).
+/// Since F2 the request carries the policy chosen in the settings screen;
+/// a variable that is set still wins for its field — the env is the
+/// operator's/debugging override, the file is the user's choice.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PolicyOverrides {
+    pub deny_data_collection: Option<bool>,
+    pub zdr: Option<bool>,
+}
+
+impl PolicyOverrides {
+    pub fn from_env() -> Self {
+        resolve_policy_overrides(
             std::env::var(DATA_COLLECTION_ENV).ok().as_deref(),
             std::env::var(ZDR_ENV).ok().as_deref(),
         )
     }
+
+    /// `base` (the request's preference, or the default) with every set
+    /// override applied on top.
+    pub fn apply(&self, base: ProviderPolicy) -> ProviderPolicy {
+        ProviderPolicy {
+            deny_data_collection: self.deny_data_collection.unwrap_or(base.deny_data_collection),
+            zdr: self.zdr.unwrap_or(base.zdr),
+        }
+    }
 }
 
 /// Parses the env overrides. `data_collection`: `allow` turns the restriction
-/// off, anything else (unset, blank, `deny`, a typo) keeps the safe default.
-/// `zdr`: `true`/`1`/`on`/`yes` enables it. Pure — unit-tested.
-fn resolve_provider_policy(data_collection: Option<&str>, zdr: Option<&str>) -> ProviderPolicy {
-    let allow = data_collection
+/// off, any other non-blank value (`deny`, a typo) pins the safe default,
+/// unset/blank leaves the field to the request. `zdr`: `true`/`1`/`on`/`yes`
+/// enables it, any other non-blank value disables it. Pure — unit-tested.
+fn resolve_policy_overrides(data_collection: Option<&str>, zdr: Option<&str>) -> PolicyOverrides {
+    let deny_data_collection = data_collection
         .map(str::trim)
-        .is_some_and(|v| v.eq_ignore_ascii_case("allow"));
+        .filter(|v| !v.is_empty())
+        .map(|v| !v.eq_ignore_ascii_case("allow"));
     let zdr = zdr
         .map(|v| v.trim().to_ascii_lowercase())
-        .is_some_and(|v| matches!(v.as_str(), "true" | "1" | "on" | "yes"));
-    ProviderPolicy {
-        deny_data_collection: !allow,
+        .filter(|v| !v.is_empty())
+        .map(|v| matches!(v.as_str(), "true" | "1" | "on" | "yes"));
+    PolicyOverrides {
+        deny_data_collection,
         zdr,
     }
+}
+
+/// The env-only resolution (kept for its tests): overrides over the default.
+#[cfg(test)]
+fn resolve_provider_policy(data_collection: Option<&str>, zdr: Option<&str>) -> ProviderPolicy {
+    resolve_policy_overrides(data_collection, zdr).apply(ProviderPolicy::default())
 }
 
 /// The `provider` object for the request body, or `None` when the policy is
@@ -170,18 +217,34 @@ fn provider_preferences(policy: &ProviderPolicy) -> Option<Value> {
 
 pub struct OpenRouterClient {
     http: reqwest::Client,
+    /// Policy for requests that carry no preference of their own.
     policy: ProviderPolicy,
+    /// Env overrides applied on top of whichever policy a request resolves to.
+    overrides: PolicyOverrides,
     timeouts: StreamTimeouts,
     chat_url: String,
 }
 
 impl OpenRouterClient {
     pub fn new() -> Self {
-        Self::with_config(
+        let mut client = Self::with_config(
             OPENROUTER_CHAT_COMPLETIONS_URL,
-            ProviderPolicy::from_env(),
+            ProviderPolicy::default(),
             StreamTimeouts::from_env(),
-        )
+        );
+        client.overrides = PolicyOverrides::from_env();
+        client
+    }
+
+    /// The policy a request is sent with: its own preference (settings, F2)
+    /// or the client's default, with the env overrides on top.
+    pub fn effective_policy(&self, request: &LlmStreamRequest) -> ProviderPolicy {
+        let base = request
+            .provider
+            .as_ref()
+            .map(ProviderPolicy::from)
+            .unwrap_or_else(|| self.policy.clone());
+        self.overrides.apply(base)
     }
 
     /// Explicit configuration — production uses `new()`; tests point `chat_url`
@@ -196,6 +259,7 @@ impl OpenRouterClient {
         Self {
             http,
             policy,
+            overrides: PolicyOverrides::default(),
             timeouts,
             chat_url: chat_url.to_string(),
         }
@@ -213,11 +277,12 @@ impl OpenRouterClient {
         request: &LlmStreamRequest,
         channel: &Channel<LlmChunk>,
     ) {
-        let body = build_request_body(request, &self.policy);
+        let policy = self.effective_policy(request);
+        let body = build_request_body(request, &policy);
         let started = Instant::now();
         let first_byte_secs = self.timeouts.first_byte.as_secs_f64();
         log::info!(
-            "llm_stream: model={} messages={} images={} reasoning={} max_edge={:?}",
+            "llm_stream: model={} messages={} images={} reasoning={} max_edge={:?} data_collection={} zdr={}",
             request.model,
             request.messages.len(),
             request
@@ -228,6 +293,8 @@ impl OpenRouterClient {
                 .count(),
             request.reasoning_effort.as_deref().unwrap_or("off"),
             request.max_image_edge,
+            if policy.deny_data_collection { "deny" } else { "allow" },
+            policy.zdr,
         );
 
         // The response headers must arrive within the first-byte budget too.
@@ -987,6 +1054,7 @@ mod tests {
             reasoning_effort: None,
             max_image_edge: None,
             request_id: None,
+            provider: None,
         };
 
         let body = build_request_body(&request, &ProviderPolicy::default());
@@ -1034,6 +1102,7 @@ mod tests {
             reasoning_effort: None,
             max_image_edge: None,
             request_id: None,
+            provider: None,
         };
 
         let body = build_request_body(&request, &ProviderPolicy::default());
@@ -1059,6 +1128,7 @@ mod tests {
             reasoning_effort: None,
             max_image_edge: None,
             request_id: None,
+            provider: None,
         }
     }
 
@@ -1089,6 +1159,52 @@ mod tests {
         let body = build_request_body(&text_request(), &strict);
         assert_eq!(body["provider"]["data_collection"], "deny");
         assert_eq!(body["provider"]["zdr"], true);
+    }
+
+    #[test]
+    fn effective_policy_env_overrides_win_over_the_request_preference() {
+        let client =
+            OpenRouterClient::with_config("http://localhost:1/x", ProviderPolicy::default(), StreamTimeouts::default());
+        // No preference on the request → the client's default policy.
+        assert_eq!(client.effective_policy(&text_request()), ProviderPolicy::default());
+        // The request's preference (settings screen, F2) is used as-is when
+        // no env var is set.
+        let mut request = text_request();
+        request.provider = Some(ProviderPreference {
+            data_collection: DataCollection::Allow,
+            zdr: true,
+        });
+        assert_eq!(
+            client.effective_policy(&request),
+            ProviderPolicy { deny_data_collection: false, zdr: true }
+        );
+        // A set env var wins for its field only.
+        let mut pinned =
+            OpenRouterClient::with_config("http://localhost:1/x", ProviderPolicy::default(), StreamTimeouts::default());
+        pinned.overrides = resolve_policy_overrides(Some("deny"), None);
+        assert_eq!(
+            pinned.effective_policy(&request),
+            ProviderPolicy { deny_data_collection: true, zdr: true }
+        );
+        pinned.overrides = resolve_policy_overrides(None, Some("off"));
+        assert_eq!(
+            pinned.effective_policy(&request),
+            ProviderPolicy { deny_data_collection: false, zdr: false }
+        );
+    }
+
+    #[test]
+    fn policy_overrides_parse_only_non_blank_values() {
+        assert_eq!(resolve_policy_overrides(None, None), PolicyOverrides::default());
+        assert_eq!(resolve_policy_overrides(Some(" "), Some("")), PolicyOverrides::default());
+        assert_eq!(
+            resolve_policy_overrides(Some("allow"), Some("1")),
+            PolicyOverrides { deny_data_collection: Some(false), zdr: Some(true) }
+        );
+        assert_eq!(
+            resolve_policy_overrides(Some("deny"), Some("no")),
+            PolicyOverrides { deny_data_collection: Some(true), zdr: Some(false) }
+        );
     }
 
     #[test]

@@ -6,6 +6,7 @@ import { useStopRun } from '@/ui/hooks/useStopRun';
 import { useElapsedSeconds } from '@/ui/hooks/useElapsedSeconds';
 import { useApiKeySettings } from '@/ui/hooks/useApiKeySettings';
 import { useDiagnostics } from '@/ui/hooks/useDiagnostics';
+import { useSettings } from '@/ui/hooks/useSettings';
 import { AGENT_LIST, resolveAgent } from '@/core/domain/agents-catalog';
 import { AgentSwitch } from './AgentSwitch';
 import { AudioControls } from './AudioControls';
@@ -56,6 +57,7 @@ export function Hud() {
   const stop = useStopRun(streaming);
   const apiKey = useApiKeySettings();
   const diagnostics = useDiagnostics();
+  const settingsForm = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const selectedAgent = resolveAgent(agentId);
@@ -141,6 +143,7 @@ export function Hud() {
             onClear={apiKey.clear}
             onCopyDiagnostics={() => void diagnostics.copy()}
             diagnosticsStatus={diagnostics.status}
+            form={settingsForm}
           />
         )}
         {/*

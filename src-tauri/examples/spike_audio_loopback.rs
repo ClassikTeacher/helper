@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("▶ Играйте звук на устройстве вывода (музыка/видео/речь) прямо сейчас...");
 
     let recorder = WasapiLoopbackRecorder::new();
-    recorder.start()?;
+    recorder.start(60)?;
     sleep(Duration::from_secs(RECORD_SECS));
     recorder.stop()?;
 

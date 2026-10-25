@@ -19,16 +19,23 @@ if (isTauriWindow()) installLogForwarding();
 
 const container = createContainer();
 
-// Seed the dev API key into the keychain BEFORE first render, so the HUD's
-// initial "is a key configured?" check already sees it and no key-missing
-// banner flashes. No-op in production builds (see seedDevApiKey). Startup must
-// not block on it, so we render once it settles (`finally`).
-void seedDevApiKey(container).finally(() => {
-  ReactDOM.createRoot(rootEl).render(
-    <React.StrictMode>
-      <ServicesProvider container={container}>
-        <App />
-      </ServicesProvider>
-    </React.StrictMode>,
-  );
-});
+// Before the first render: seed the dev API key into the keychain (so the
+// HUD's initial "is a key configured?" check already sees it — a no-op in
+// production, see seedDevApiKey) and load the user's settings (F2), so the
+// hotkeys are registered once, with the right bindings. Neither may block
+// startup: a failed settings load falls back to the defaults.
+void Promise.allSettled([seedDevApiKey(container), container.useCases.manageSettings.load()])
+  .then(([, settings]) => {
+    if (settings.status === 'rejected') {
+      console.error('Failed to load settings — using the defaults', settings.reason);
+    }
+  })
+  .finally(() => {
+    ReactDOM.createRoot(rootEl).render(
+      <React.StrictMode>
+        <ServicesProvider container={container}>
+          <App />
+        </ServicesProvider>
+      </React.StrictMode>,
+    );
+  });

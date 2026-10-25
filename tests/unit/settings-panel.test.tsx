@@ -2,9 +2,28 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SettingsPanel } from '@/ui/components/SettingsPanel';
+import type { SettingsForm } from '@/ui/hooks/useSettings';
 import type { ComponentProps } from 'react';
+import { BASE } from './settings.domain.test';
 
 type Props = ComponentProps<typeof SettingsPanel>;
+
+function fakeForm(overrides: Partial<SettingsForm> = {}): SettingsForm {
+  return {
+    settings: BASE,
+    defaults: BASE,
+    draft: BASE,
+    dirty: false,
+    errors: {},
+    status: 'idle',
+    error: null,
+    update: vi.fn(),
+    save: vi.fn(async () => {}),
+    discard: vi.fn(),
+    reset: vi.fn(async () => {}),
+    ...overrides,
+  };
+}
 
 /** All-callbacks-mocked defaults; each test overrides what it exercises. */
 function props(overrides: Partial<Props> = {}): Props {
@@ -16,6 +35,7 @@ function props(overrides: Partial<Props> = {}): Props {
     onClear: vi.fn(),
     onCopyDiagnostics: vi.fn(),
     diagnosticsStatus: 'idle',
+    form: fakeForm(),
     ...overrides,
   };
 }
@@ -81,5 +101,50 @@ describe('SettingsPanel', () => {
 
     rerender(<SettingsPanel {...props({ onCopyDiagnostics, diagnosticsStatus: 'error' })} />);
     expect(screen.getByRole('button', { name: /copy failed/i })).toBeEnabled();
+  });
+
+  it('the Хоткеи tab edits the draft through form.update and saves only when dirty and valid (F2)', async () => {
+    const update = vi.fn();
+    const save = vi.fn(async () => {});
+    const user = userEvent.setup();
+    const { rerender } = render(<SettingsPanel {...props({ form: fakeForm({ update, save }) })} />);
+
+    await user.click(screen.getByRole('tab', { name: 'Хоткеи' }));
+    const field = screen.getByLabelText(/скриншот монитора/i);
+    expect(field).toHaveValue(BASE.hotkeys.capture);
+    expect(screen.getByRole('button', { name: 'Сохранить' })).toBeDisabled();
+
+    await user.type(field, '1');
+    expect(update).toHaveBeenLastCalledWith({ hotkeys: { capture: `${BASE.hotkeys.capture}1` } });
+
+    rerender(<SettingsPanel {...props({ form: fakeForm({ update, save, dirty: true }) })} />);
+    await user.click(screen.getByRole('tab', { name: 'Хоткеи' }));
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    expect(save).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <SettingsPanel
+        {...props({ form: fakeForm({ update, save, dirty: true, errors: { 'hotkeys.capture': 'Нужен модификатор' } }) })}
+      />,
+    );
+    await user.click(screen.getByRole('tab', { name: 'Хоткеи' }));
+    expect(screen.getByRole('button', { name: 'Сохранить' })).toBeDisabled();
+    expect(screen.getByRole('alert')).toHaveTextContent('Нужен модификатор');
+  });
+
+  it('the Приватность tab toggles the provider policy; "Сбросить" calls form.reset', async () => {
+    const update = vi.fn();
+    const reset = vi.fn(async () => {});
+    const user = userEvent.setup();
+    render(<SettingsPanel {...props({ form: fakeForm({ update, reset }) })} />);
+
+    await user.click(screen.getByRole('tab', { name: 'Приватность' }));
+    await user.selectOptions(screen.getByLabelText(/provider\.data_collection/i), 'allow');
+    expect(update).toHaveBeenCalledWith({ provider: { dataCollection: 'allow' } });
+    await user.click(screen.getByLabelText(/требовать ZDR/i));
+    expect(update).toHaveBeenCalledWith({ provider: { zdr: true } });
+
+    await user.click(screen.getByRole('button', { name: /сбросить/i }));
+    expect(reset).toHaveBeenCalledTimes(1);
   });
 });
