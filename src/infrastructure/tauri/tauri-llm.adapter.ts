@@ -1,5 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { IPC_COMMANDS } from '@/core/contracts/ipc-commands';
+import type { ProviderSettings } from '@/core/domain/settings';
 import type {
   LlmCancelRequestDto,
   LlmChunkDto,
@@ -29,11 +30,22 @@ import type {
  * whole response before yielding the first token.
  */
 export class TauriLlmAdapter implements LlmPort {
+  /**
+   * @param options.provider the current provider data policy (settings, F2);
+   *   read per request so a change in ⚙ applies to the next call.
+   */
+  constructor(private readonly options: { readonly provider?: () => ProviderSettings } = {}) {}
+
   async *stream(request: LlmStreamRequest): AsyncIterable<LlmChunk> {
     // Tags the native request so an abort can stop it there too (P0): without
     // this the HTTP stream kept generating — and billing — after Stop.
     const requestId = newRequestId();
-    const dtoRequest: LlmStreamRequestDto = { ...toStreamRequestDto(request), requestId };
+    const provider = this.options.provider?.();
+    const dtoRequest: LlmStreamRequestDto = {
+      ...toStreamRequestDto(request),
+      requestId,
+      ...(provider ? { provider: { dataCollection: provider.dataCollection, zdr: provider.zdr } } : {}),
+    };
 
     const pending: LlmChunkDto[] = [];
     let wake: (() => void) | undefined;

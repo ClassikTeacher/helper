@@ -4,6 +4,7 @@
 // them on the IPC wire. `pnpm typecheck` verifies every sample against the TS DTO:
 // a renamed, missing or extra field fails the build (2026-10 review §5.2).
 import type {
+  AudioStartRequestDto,
   AudioStartResultDto,
   CaptureRequestDto,
   CaptureResultDto,
@@ -16,6 +17,7 @@ import type {
   SecretHasResultDto,
   SecretKeyRequestDto,
   SecretSetRequestDto,
+  TranscribeRequestDto,
   TranscribeResultDto,
   TrayActionPayloadDto,
 } from '@/core/contracts/dto';
@@ -101,6 +103,10 @@ export const llmStreamRequest: LlmStreamRequestDto = {
     }
   ],
   "model": "anthropic/claude-haiku-4.5",
+  "provider": {
+    "dataCollection": "deny",
+    "zdr": true
+  },
   "reasoningEffort": "medium",
   "requestId": "req-1",
   "temperature": 0.3
@@ -151,8 +157,19 @@ export const secretSetRequest: SecretSetRequestDto = {
   "value": "sk-or-v1-sample"
 };
 
+export const audioStartRequest: AudioStartRequestDto = {
+  "windowSecs": 90
+};
+
 export const audioStartResult: AudioStartResultDto = {
   "maxSeconds": 60
+};
+
+export const transcribeRequest: TranscribeRequestDto = {
+  "language": "en",
+  "prompt": "off",
+  "silenceDbfs": -45.0,
+  "silenceGate": true
 };
 
 export const transcribeResult: TranscribeResultDto = {

@@ -33,24 +33,31 @@ import {
  * framework, no Tauri, no fetch — so the failover logic is unit-tested against
  * a scripted fake (see tests/unit/resilient-llm.test.ts).
  */
+export type RoutesSource = () => RouteProfiles;
+
 export class ResilientLlm implements LlmPort {
-  private readonly routes: RouteProfiles;
+  private readonly routes: RoutesSource;
 
   /**
-   * @param routes a profile per route, or a bare chain — shorthand for "both
-   *   routes use this chain, with no extra request parameters".
+   * @param routes a profile per route, a bare chain — shorthand for "both
+   *   routes use this chain, with no extra request parameters" — or a
+   *   function returning the profiles, read on every request so settings
+   *   changed in ⚙ (F2) apply to the next call without rebuilding the container.
    */
   constructor(
     private readonly inner: LlmPort,
-    routes: RouteProfiles | readonly ModelSlug[],
+    routes: RouteProfiles | readonly ModelSlug[] | RoutesSource,
   ) {
-    this.routes = isChain(routes)
-      ? { light: bareProfile(routes), heavy: bareProfile(routes) }
-      : { light: normalizeProfile(routes.light), heavy: normalizeProfile(routes.heavy) };
+    if (typeof routes === 'function') {
+      this.routes = () => normalizeRoutes(routes());
+    } else {
+      const fixed = normalizeRoutes(routes);
+      this.routes = () => fixed;
+    }
   }
 
   async *stream(request: LlmStreamRequest): AsyncIterable<LlmChunk> {
-    const profile = this.routes[request.route ?? DEFAULT_ROUTE];
+    const profile = this.routes()[request.route ?? DEFAULT_ROUTE];
     const params = requestParamsFor(profile);
     // Profile parameters, overridden by any the caller set explicitly (the
     // eval harness sweeps them). `route` is consumed here — adapters below
@@ -101,6 +108,12 @@ export class ResilientLlm implements LlmPort {
       if (produced || isLast || request.signal?.aborted) return;
     }
   }
+}
+
+function normalizeRoutes(routes: RouteProfiles | readonly ModelSlug[]): RouteProfiles {
+  return isChain(routes)
+    ? { light: bareProfile(routes), heavy: bareProfile(routes) }
+    : { light: normalizeProfile(routes.light), heavy: normalizeProfile(routes.heavy) };
 }
 
 function isChain(routes: RouteProfiles | readonly ModelSlug[]): routes is readonly ModelSlug[] {

@@ -111,6 +111,12 @@ export interface LlmStreamRequestDto {
   readonly maxImageEdge?: number;
   /** Client-generated id so `llm_cancel` can stop this request. */
   readonly requestId?: string;
+  /**
+   * Provider data policy from the settings screen (F2). Absent = native's
+   * default (`data_collection=deny`); `AI_HELPER_DATA_COLLECTION`/`AI_HELPER_ZDR`
+   * override it per field either way.
+   */
+  readonly provider?: ProviderPreferenceDto;
 }
 
 export interface LlmCancelRequestDto {
@@ -141,6 +147,15 @@ export type LlmChunkDto =
   // key, auth, bad request). Mirrors `LlmChunk::Error.retryable` in dto.rs.
   | { readonly type: 'error'; readonly message: string; readonly retryable: boolean };
 
+/** Mirror of `DataCollection` in dto.rs. */
+export type DataCollectionDto = 'deny' | 'allow';
+
+/** OpenRouter provider preference (F2). Mirror of `ProviderPreference` in dto.rs. */
+export interface ProviderPreferenceDto {
+  readonly dataCollection: DataCollectionDto;
+  readonly zdr: boolean;
+}
+
 // --- Secrets (write-only from the webview) ---------------------------------
 // There is deliberately no DTO that carries a secret value back to the webview
 // (architecture.md §11). Mirror of `SecretKeyRequest`/`SecretHasResult`/
@@ -161,9 +176,34 @@ export interface SecretSetRequestDto {
 // `audioStartCapture`/`audioStopCapture` take no payload. `transcribeAudio`
 // returns this. The recorded audio stays in native; only the text crosses the
 // seam. Mirror of `TranscribeResult` in dto.rs.
+/**
+ * Optional payload of `audioStartCapture` (F2): the rolling window chosen in
+ * settings; `AI_HELPER_MAX_RECORDING_SECS` still wins. Mirror of
+ * `AudioStartRequest` in dto.rs.
+ */
+export interface AudioStartRequestDto {
+  readonly windowSecs?: number;
+}
+
 /** Result of `audioStartCapture`: the recording keeps only the LAST `maxSeconds`. */
 export interface AudioStartResultDto {
   readonly maxSeconds: number;
+}
+
+/**
+ * Optional payload of `transcribeAudio` (F2): STT options from settings; the
+ * matching `AI_HELPER_STT_*` env var wins per field. Mirror of
+ * `TranscribeRequest` in dto.rs.
+ */
+export interface TranscribeRequestDto {
+  /** Whisper language hint (`ru`, `en`, …); `auto` = no hint. */
+  readonly language?: string;
+  /** Vocabulary prompt; empty = the built-in vocabulary, `off` = none. */
+  readonly prompt?: string;
+  /** `false` uploads the clip exactly as recorded (gate off). */
+  readonly silenceGate?: boolean;
+  /** Gate level in dBFS (≤ 0) when the gate is on. */
+  readonly silenceDbfs?: number;
 }
 
 export interface TranscribeResultDto {

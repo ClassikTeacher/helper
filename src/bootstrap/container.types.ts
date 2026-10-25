@@ -5,6 +5,9 @@ import type { ManageApiKeyUseCase } from '@/core/application/use-cases/manage-ap
 import type { OcrPort } from '@/core/application/ports/ocr.port';
 import type { TranscribeAudioUseCase } from '@/core/application/use-cases/transcribe-audio.use-case';
 import type { GetDiagnosticsUseCase } from '@/core/application/use-cases/get-diagnostics.use-case';
+import type { ManageSettingsUseCase } from '@/core/application/use-cases/manage-settings.use-case';
+import type { SettingsPort } from '@/core/application/ports/settings.port';
+import type { AppSettings } from '@/core/domain/settings';
 import type { AudioTranscriptionPort } from '@/core/application/ports/audio-transcription.port';
 import type { DiagnosticsPort } from '@/core/application/ports/diagnostics.port';
 import type { OverlayPort } from '@/core/application/ports/overlay.port';
@@ -30,6 +33,8 @@ export interface AppContainer {
     readonly transcribeAudio: TranscribeAudioUseCase;
     /** Bug-report text: version, platform, native log tail (⚙ → Copy diagnostics). */
     readonly getDiagnostics: GetDiagnosticsUseCase;
+    /** User settings: hotkeys, routes, STT, recording window, privacy (F2). */
+    readonly manageSettings: ManageSettingsUseCase;
   };
   readonly platform: {
     readonly overlay: OverlayPort;
@@ -53,4 +58,7 @@ export interface ContainerOverrides {
   readonly ocr?: OcrPort;
   readonly diagnostics?: DiagnosticsPort;
   readonly tray?: TrayPort;
+  readonly settings?: SettingsPort;
+  /** The defaults the settings start from (tests pin them instead of reading `VITE_*`). */
+  readonly defaultSettings?: AppSettings;
 }

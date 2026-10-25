@@ -348,6 +348,7 @@ mod tests {
             reasoning_effort: None,
             max_image_edge: Some(20),
             request_id: None,
+            provider: None,
         };
 
         assert_eq!(downscale_request_images(&mut request), 1);

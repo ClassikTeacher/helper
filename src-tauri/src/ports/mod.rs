@@ -83,7 +83,9 @@ pub struct RecordedAudio {
 /// or a stop-without-start can't panic.
 pub trait AudioRecorder: Send + Sync {
     /// Begin capturing loopback audio, discarding anything previously buffered.
-    fn start(&self) -> Result<(), String>;
+    /// Keeps a rolling window of the last `window_secs` seconds (F2: chosen in
+    /// settings; the command resolves env > settings > default).
+    fn start(&self, window_secs: u32) -> Result<(), String>;
     /// Stop capturing. Buffered samples are retained until `take_audio`.
     fn stop(&self) -> Result<(), String>;
     /// Drain and return everything captured since `start`, clearing the buffer.

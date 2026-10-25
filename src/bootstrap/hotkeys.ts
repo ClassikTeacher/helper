@@ -1,63 +1,25 @@
 import { useHudStore, MAX_SCREENSHOTS } from '@/ui/store/hud.store';
 import { sendBatch } from './send-batch';
 import { toggleRecording } from './toggle-recording';
+import { DEFAULT_HOTKEYS } from './default-hotkeys';
 import type { CaptureTarget } from '@/core/application/ports/screen-capture.port';
+import type { HotkeySettings } from '@/core/domain/settings';
 import type { AppContainer } from './container.types';
 
 /** The bootstrap slice the hotkey wiring needs: the capture use-case + overlay. */
 type HotkeysContainer = Pick<AppContainer, 'platform' | 'useCases'>;
 
 /**
- * Six distinct global hotkeys. Overridable via `VITE_*` env vars
- * (see `.env.example`) for easy tuning during early development; not exposed
- * as an in-app setting yet — see tasks.md backlog "Настраиваемый хоткей".
+ * The six global hotkeys. Their bindings come from the settings (F2) — the
+ * build's defaults live in `default-hotkeys.ts` and are re-exported here as
+ * named constants for callers/tests that want the defaults.
  */
-/** Show/hide the HUD — a pure visibility toggle, no capture. */
-export const TOGGLE_HUD_ACCELERATOR =
-  import.meta.env.VITE_TOGGLE_HUD_ACCELERATOR || 'CommandOrControl+Shift+Space';
-/**
- * Capture the screen and ADD it to the batch (phase 8) — does NOT analyze.
- * The user stages 1–`MAX_SCREENSHOTS` shots this way, then fires
- * `SEND_ACCELERATOR` to analyze them together. Default is `Ctrl+Alt+S` rather
- * than the more obvious `Ctrl+Shift+S` because the latter is very commonly
- * claimed globally by screenshot tools (ShareX, Lightshot, Snip utilities,
- * vendor overlays), which makes registration fail with "HotKey already
- * registered". Override via `VITE_CAPTURE_ACCELERATOR`.
- */
-export const CAPTURE_ACCELERATOR =
-  import.meta.env.VITE_CAPTURE_ACCELERATOR || 'CommandOrControl+Alt+S';
-/**
- * Capture the ACTIVE WINDOW into the batch (F5): the IDE alone — no second
- * monitor, panels or chat, so code is larger at the same `maxImageEdge`.
- * Falls back to the monitor under the cursor when there is no capturable
- * window (the HUD shows a note). Override via `VITE_CAPTURE_WINDOW_ACCELERATOR`.
- */
-export const CAPTURE_WINDOW_ACCELERATOR =
-  import.meta.env.VITE_CAPTURE_WINDOW_ACCELERATOR || 'CommandOrControl+Alt+W';
-/**
- * Send the staged screenshot batch (+ the current agent/language/instructions)
- * for analysis and stream the answer (phase 8). Override via
- * `VITE_SEND_ACCELERATOR`.
- */
-export const SEND_ACCELERATOR =
-  import.meta.env.VITE_SEND_ACCELERATOR || 'CommandOrControl+Alt+Enter';
-/**
- * Toggle loopback audio recording (phase 9) — captures the output device (the
- * interlocutor's voice). The captured audio is transcribed and attached to the
- * batch when `SEND_ACCELERATOR` fires. Override via `VITE_RECORD_ACCELERATOR`.
- */
-export const RECORD_ACCELERATOR =
-  import.meta.env.VITE_RECORD_ACCELERATOR || 'CommandOrControl+Alt+L';
-
-/**
- * Stage the clipboard's text as the code for the next send (R15). The user
- * selects code in the editor, copies it, and fires this — the exact text then
- * travels as a numbered `<code_text>` block instead of being read from pixels.
- * Default `Ctrl+Alt+X` avoids common IDE bindings (`Ctrl+Alt+V`/`C` are
- * JetBrains refactorings). Override via `VITE_PASTE_CODE_ACCELERATOR`.
- */
-export const PASTE_CODE_ACCELERATOR =
-  import.meta.env.VITE_PASTE_CODE_ACCELERATOR || 'CommandOrControl+Alt+X';
+export const TOGGLE_HUD_ACCELERATOR = DEFAULT_HOTKEYS.toggleHud;
+export const CAPTURE_ACCELERATOR = DEFAULT_HOTKEYS.capture;
+export const CAPTURE_WINDOW_ACCELERATOR = DEFAULT_HOTKEYS.captureWindow;
+export const SEND_ACCELERATOR = DEFAULT_HOTKEYS.send;
+export const RECORD_ACCELERATOR = DEFAULT_HOTKEYS.record;
+export const PASTE_CODE_ACCELERATOR = DEFAULT_HOTKEYS.pasteCode;
 
 /**
  * Toggle the HUD's visibility. Delegates to `overlay.toggle()`, which flips
@@ -154,26 +116,29 @@ async function toggleRecordingHotkey(container: HotkeysContainer): Promise<void>
  * rethrown so the caller can surface it (`ServicesProvider` shows the HUD with
  * an error banner as a stopgap) — failures are never swallowed.
  */
-export async function registerHotkeys(container: HotkeysContainer): Promise<void> {
+export async function registerHotkeys(
+  container: HotkeysContainer,
+  bindings: HotkeySettings = DEFAULT_HOTKEYS,
+): Promise<void> {
   const { hotkey } = container.platform;
 
   const results = await Promise.allSettled([
-    hotkey.register(TOGGLE_HUD_ACCELERATOR, () => {
+    hotkey.register(bindings.toggleHud, () => {
       void toggleHud(container);
     }),
-    hotkey.register(CAPTURE_ACCELERATOR, () => {
+    hotkey.register(bindings.capture, () => {
       void captureToBuffer(container);
     }),
-    hotkey.register(CAPTURE_WINDOW_ACCELERATOR, () => {
+    hotkey.register(bindings.captureWindow, () => {
       void captureToBuffer(container, 'active-window');
     }),
-    hotkey.register(SEND_ACCELERATOR, () => {
+    hotkey.register(bindings.send, () => {
       void sendBatch(container);
     }),
-    hotkey.register(RECORD_ACCELERATOR, () => {
+    hotkey.register(bindings.record, () => {
       void toggleRecordingHotkey(container);
     }),
-    hotkey.register(PASTE_CODE_ACCELERATOR, () => {
+    hotkey.register(bindings.pasteCode, () => {
       void pasteCodeFromClipboard(container);
     }),
   ]);
@@ -189,14 +154,15 @@ export async function registerHotkeys(container: HotkeysContainer): Promise<void
 
 export async function unregisterHotkeys(
   container: Pick<AppContainer, 'platform'>,
+  bindings: HotkeySettings = DEFAULT_HOTKEYS,
 ): Promise<void> {
   const { hotkey } = container.platform;
   await Promise.allSettled([
-    hotkey.unregister(TOGGLE_HUD_ACCELERATOR),
-    hotkey.unregister(CAPTURE_ACCELERATOR),
-    hotkey.unregister(CAPTURE_WINDOW_ACCELERATOR),
-    hotkey.unregister(SEND_ACCELERATOR),
-    hotkey.unregister(RECORD_ACCELERATOR),
-    hotkey.unregister(PASTE_CODE_ACCELERATOR),
+    hotkey.unregister(bindings.toggleHud),
+    hotkey.unregister(bindings.capture),
+    hotkey.unregister(bindings.captureWindow),
+    hotkey.unregister(bindings.send),
+    hotkey.unregister(bindings.record),
+    hotkey.unregister(bindings.pasteCode),
   ]);
 }

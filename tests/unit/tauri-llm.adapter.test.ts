@@ -268,4 +268,31 @@ describe('TauriLlmAdapter', () => {
 
     resolveInvoke();
   });
+
+  it('sends the provider data policy from settings when a source is configured (F2)', async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      lastChannel!.emit({ type: 'finish', reason: 'stop' });
+    });
+    let zdr = false;
+    const adapter = new TauriLlmAdapter({ provider: () => ({ dataCollection: 'allow', zdr }) });
+
+    await collect(adapter.stream(REQUEST));
+    expect(invoke).toHaveBeenLastCalledWith(IPC_COMMANDS.llmStream, {
+      request: expect.objectContaining({ provider: { dataCollection: 'allow', zdr: false } }),
+      channel: expect.anything(),
+    });
+
+    // Read per request: a change in ⚙ applies to the next call.
+    zdr = true;
+    await collect(adapter.stream(REQUEST));
+    expect(invoke).toHaveBeenLastCalledWith(IPC_COMMANDS.llmStream, {
+      request: expect.objectContaining({ provider: { dataCollection: 'allow', zdr: true } }),
+      channel: expect.anything(),
+    });
+
+    // Without a source the request carries no provider field (native default).
+    await collect(new TauriLlmAdapter().stream(REQUEST));
+    const last = (invoke as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1] as { request: Record<string, unknown> };
+    expect(last.request).not.toHaveProperty('provider');
+  });
 });

@@ -40,7 +40,24 @@ const EVENT_TIMEOUT_MS: u32 = 200;
 const DEFAULT_MAX_RECORDING_SECS: u32 = 60;
 
 /// Environment variable overriding [`DEFAULT_MAX_RECORDING_SECS`] (whole seconds).
-const MAX_RECORDING_SECS_ENV: &str = "AI_HELPER_MAX_RECORDING_SECS";
+pub const MAX_RECORDING_SECS_ENV: &str = "AI_HELPER_MAX_RECORDING_SECS";
+
+/// The rolling window for one recording (F2): the env override when set and
+/// valid (operator), else what the settings screen asked for (if positive),
+/// else the default. Pure — unit-tested.
+pub fn resolve_window_secs(env_raw: Option<&str>, requested: Option<u32>) -> u32 {
+    if let Some(secs) = env_raw
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|secs| *secs > 0)
+    {
+        return secs;
+    }
+    requested
+        .filter(|secs| *secs > 0)
+        .unwrap_or(DEFAULT_MAX_RECORDING_SECS)
+}
 
 /// Parse the max-recording-seconds override, falling back to the default on an
 /// absent/blank/invalid/zero value. Pure (env read is done by the caller) so it
@@ -127,7 +144,7 @@ impl Default for WasapiLoopbackRecorder {
 }
 
 impl AudioRecorder for WasapiLoopbackRecorder {
-    fn start(&self) -> Result<(), String> {
+    fn start(&self, window_secs: u32) -> Result<(), String> {
         let mut inner = self
             .inner
             .lock()
@@ -157,7 +174,7 @@ impl AudioRecorder for WasapiLoopbackRecorder {
         let handle = std::thread::Builder::new()
             .name("wasapi-loopback".to_string())
             .spawn(move || {
-                if let Err(e) = capture_loop(&running, &capture) {
+                if let Err(e) = capture_loop(&running, &capture, window_secs) {
                     if let Ok(mut slot) = thread_error.lock() {
                         *slot = Some(e);
                     }
@@ -228,7 +245,7 @@ fn map_wasapi<E: std::fmt::Display>(e: E) -> String {
 
 /// The capture thread body: sets up a loopback capture client on the default
 /// render device and appends captured bytes to `capture` until `running` clears.
-fn capture_loop(running: &AtomicBool, capture: &Mutex<Capture>) -> Result<(), String> {
+fn capture_loop(running: &AtomicBool, capture: &Mutex<Capture>, window_secs: u32) -> Result<(), String> {
     initialize_mta()
         .ok()
         .map_err(|e| format!("COM init (MTA) failed: {e}"))?;
@@ -277,9 +294,9 @@ fn capture_loop(running: &AtomicBool, capture: &Mutex<Capture>) -> Result<(), St
 
     audio_client.start_stream().map_err(map_wasapi)?;
 
-    // Keep only the last `max_recording_secs()` of audio: bounded memory and
-    // STT upload, and the newest speech (the actual question) is never lost.
-    let max_bytes = max_bytes_for(max_recording_secs(), sample_rate, channels);
+    // Keep only the last `window_secs` of audio: bounded memory and STT
+    // upload, and the newest speech (the actual question) is never lost.
+    let max_bytes = max_bytes_for(window_secs, sample_rate, channels);
     let frame_bytes = channels as usize * std::mem::size_of::<f32>();
 
     let mut queue: VecDeque<u8> = VecDeque::new();
@@ -353,6 +370,18 @@ mod tests {
     fn stop_without_start_is_ok() {
         let recorder = WasapiLoopbackRecorder::new();
         assert!(recorder.stop().is_ok());
+    }
+
+    #[test]
+    fn resolve_window_secs_env_wins_then_request_then_default() {
+        assert_eq!(resolve_window_secs(None, None), DEFAULT_MAX_RECORDING_SECS);
+        assert_eq!(resolve_window_secs(None, Some(90)), 90);
+        assert_eq!(resolve_window_secs(None, Some(0)), DEFAULT_MAX_RECORDING_SECS);
+        assert_eq!(resolve_window_secs(Some("30"), Some(90)), 30);
+        // A blank or invalid env value does not pin anything.
+        assert_eq!(resolve_window_secs(Some(" "), Some(90)), 90);
+        assert_eq!(resolve_window_secs(Some("abc"), Some(90)), 90);
+        assert_eq!(resolve_window_secs(Some("0"), None), DEFAULT_MAX_RECORDING_SECS);
     }
 
     #[test]

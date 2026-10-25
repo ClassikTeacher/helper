@@ -7,8 +7,10 @@
 use tauri::{AppHandle, State};
 
 use crate::commands::secrets::OPENROUTER_API_KEY_SECRET;
-use crate::dto::{AudioStartResult, TranscribeResult};
-use crate::infra::audio::{prepare_stt_audio, silence_threshold_from_env};
+use crate::dto::{AudioStartRequest, AudioStartResult, TranscribeRequest, TranscribeResult};
+use crate::infra::audio::{prepare_stt_audio, resolve_silence_threshold_with, silence_threshold_env_raw};
+use crate::infra::stt_client::SttOptions;
+use crate::infra::wasapi_loopback::{resolve_window_secs, MAX_RECORDING_SECS_ENV};
 use crate::AppState;
 
 /// Start capturing loopback audio (the output device / interlocutor's voice).
@@ -19,13 +21,25 @@ use crate::AppState;
 /// (up to the 200 ms event timeout), which would stall the event loop
 /// (2026-10 review §3.4).
 #[tauri::command(async)]
-pub fn audio_start_capture(app: AppHandle, state: State<'_, AppState>) -> Result<AudioStartResult, String> {
-    state.audio.start()?;
+pub fn audio_start_capture(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: Option<AudioStartRequest>,
+) -> Result<AudioStartResult, String> {
+    let window_secs = recording_window_secs(request.as_ref().and_then(|r| r.window_secs));
+    state.audio.start(window_secs)?;
     // The tray indicator follows the recorder, not the webview (F1).
     crate::tray::set_recording(&app, true);
+    log::info!("audio_start_capture: rolling window {window_secs} s");
     Ok(AudioStartResult {
-        max_seconds: crate::infra::wasapi_loopback::max_recording_secs(),
+        max_seconds: window_secs,
     })
+}
+
+/// Env (`AI_HELPER_MAX_RECORDING_SECS`) wins, then the settings screen's
+/// value carried by the request (F2), then the default.
+fn recording_window_secs(requested: Option<u32>) -> u32 {
+    resolve_window_secs(std::env::var(MAX_RECORDING_SECS_ENV).ok().as_deref(), requested)
 }
 
 /// Stop capturing. Buffered audio is retained for the next `transcribe_audio`.
@@ -42,7 +56,11 @@ pub fn audio_stop_capture(app: AppHandle, state: State<'_, AppState>) -> Result<
 /// (2026-10 review §3.2), or STT returned a known hallucination — that is not
 /// an error, it just means there is no audio context to attach.
 #[tauri::command]
-pub async fn transcribe_audio(state: State<'_, AppState>) -> Result<TranscribeResult, String> {
+pub async fn transcribe_audio(
+    state: State<'_, AppState>,
+    request: Option<TranscribeRequest>,
+) -> Result<TranscribeResult, String> {
+    let request = request.unwrap_or_default();
     // The key is checked BEFORE the buffer is drained: with no key the audio
     // stays recorded instead of being thrown away with the error.
     let api_key = match state.secrets.get(OPENROUTER_API_KEY_SECRET)? {
@@ -59,11 +77,17 @@ pub async fn transcribe_audio(state: State<'_, AppState>) -> Result<TranscribeRe
         });
     }
 
+    // Gate level: env override > settings (request) > default (F2).
+    let threshold = resolve_silence_threshold_with(
+        silence_threshold_env_raw().as_deref(),
+        request.silence_gate,
+        request.silence_dbfs,
+    );
     let Some(wav) = prepare_stt_audio(
         &recorded.samples,
         recorded.sample_rate,
         recorded.channels,
-        silence_threshold_from_env(),
+        threshold,
     ) else {
         // Silent clip: no upload, no hallucinated "question".
         log::info!("transcribe_audio: {secs:.1} s captured, silent under the gate — not uploaded");
@@ -78,6 +102,7 @@ pub async fn transcribe_audio(state: State<'_, AppState>) -> Result<TranscribeRe
         recorded.channels,
         wav.len() / 1024
     );
-    let text = state.stt.transcribe(&api_key, wav).await?;
+    let options = SttOptions::resolve(request.language.as_deref(), request.prompt.as_deref());
+    let text = state.stt.transcribe(&api_key, wav, options).await?;
     Ok(TranscribeResult { text })
 }
