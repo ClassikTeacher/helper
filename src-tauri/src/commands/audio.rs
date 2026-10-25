@@ -6,14 +6,10 @@
 
 use tauri::State;
 
+use crate::commands::secrets::OPENROUTER_API_KEY_SECRET;
 use crate::dto::{AudioStartResult, TranscribeResult};
 use crate::infra::audio::samples_to_wav;
 use crate::AppState;
-
-/// `SecretStore` key for the OpenRouter API key — reused for STT. MUST match
-/// `SECRET_KEYS.openRouterApiKey` (secrets.port.ts) and the copy in
-/// `commands/llm.rs`; there is no shared enum across the Rust/TS seam.
-const OPENROUTER_API_KEY_SECRET: &str = "openrouter.api_key";
 
 /// Start capturing loopback audio (the output device / interlocutor's voice).
 /// Reports the rolling window the recording keeps (the last N seconds).

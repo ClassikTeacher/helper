@@ -41,7 +41,8 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 - [ ] Works for BOTH agents: repeat capture→send with Solve and with Review selected in the HUD
 - [ ] Missing/invalid API key surfaces a readable error in the HUD (no silent failure)
 - [ ] If an error arrives mid-stream (e.g. kill network), any partial answer already streamed stays visible alongside the error ("Interrupted: …"), not replaced by it
-- [ ] **Security:** with devtools open on the webview, confirm the API key never appears in memory/network of the renderer process (only `secret_get`/`secret_set` IPC calls touch it, never the OpenRouter request itself)
+- [ ] **Security:** with devtools open on the webview, confirm that NO IPC response ever carries the key value: the only secret commands are `secret_has` (answers with a boolean), `secret_set` (the value goes IN once, when typed) and `secret_delete`. `invoke('secret_get', …)` must fail with "command not found", and `invoke('secret_set', { request: { key: 'other', value: 'x' } })` must be rejected (`unknown secret key`). The OpenRouter request itself never appears in the renderer's network tab (it is made natively)
+- [ ] **Remove key:** ⚙ → "Remove key" clears the keychain entry (`cmdkey /list` shows no `ai-helper` entry); the amber "No OpenRouter API key" banner returns
 - [ ] Cancelling mid-stream stops output
 
 ### Phase 3 — Model routing

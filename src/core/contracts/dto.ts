@@ -127,11 +127,16 @@ export type LlmChunkDto =
   // key, auth, bad request). Mirrors `LlmChunk::Error.retryable` in dto.rs.
   | { readonly type: 'error'; readonly message: string; readonly retryable: boolean };
 
-export interface SecretGetRequestDto {
+// --- Secrets (write-only from the webview) ---------------------------------
+// There is deliberately no DTO that carries a secret value back to the webview
+// (architecture.md §11). Mirror of `SecretKeyRequest`/`SecretHasResult`/
+// `SecretSetRequest` in dto.rs.
+export interface SecretKeyRequestDto {
   readonly key: string;
 }
-export interface SecretGetResultDto {
-  readonly value: string | null;
+export interface SecretHasResultDto {
+  /** A non-empty value is stored under the key. */
+  readonly exists: boolean;
 }
 export interface SecretSetRequestDto {
   readonly key: string;

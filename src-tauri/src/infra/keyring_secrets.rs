@@ -51,6 +51,14 @@ impl SecretStore for KeyringSecrets {
     fn set(&self, key: &str, value: &str) -> Result<(), String> {
         Self::entry(key)?.set_password(value).map_err(|e| e.to_string())
     }
+
+    fn delete(&self, key: &str) -> Result<(), String> {
+        match Self::entry(key)?.delete_credential() {
+            // Deleting a secret that was never set is the desired end state.
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -74,10 +82,8 @@ mod tests {
     fn round_trips_a_secret_through_the_real_os_credential_store() {
         let store = KeyringSecrets::new();
         let key = "ai-helper-test.round-trip";
-        let cleanup = || {
-            let _ = KeyringSecrets::entry(key).and_then(|e| e.delete_credential().map_err(|e| e.to_string()));
-        };
-        cleanup();
+        // `delete` on a missing entry is Ok — doubles as the pre-test cleanup.
+        store.delete(key).unwrap();
 
         assert_eq!(store.get(key).unwrap(), None);
 
@@ -87,7 +93,8 @@ mod tests {
         store.set(key, "updated").unwrap();
         assert_eq!(store.get(key).unwrap(), Some("updated".to_string()));
 
-        cleanup();
+        store.delete(key).unwrap();
         assert_eq!(store.get(key).unwrap(), None);
+        store.delete(key).unwrap();
     }
 }

@@ -130,7 +130,13 @@ export function Hud() {
           </div>
         )}
         {settingsOpen && (
-          <SettingsPanel hasKey={apiKey.hasKey} status={apiKey.status} error={apiKey.error} onSave={apiKey.save} />
+          <SettingsPanel
+            hasKey={apiKey.hasKey}
+            status={apiKey.status}
+            error={apiKey.error}
+            onSave={apiKey.save}
+            onClear={apiKey.clear}
+          />
         )}
         {/*
           Agent switch + (solver-only) language selector. Each mode has its own

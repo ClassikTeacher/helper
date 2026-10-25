@@ -172,16 +172,22 @@ pub enum LlmChunk {
     },
 }
 
+// --- Secrets (write-only from the webview) ---------------------------------
+// `secret_has`/`secret_delete` take the key; `secret_set` takes key + value.
+// There is deliberately NO DTO carrying a secret value back to the webview
+// (see `commands/secrets.rs`). Mirror of `Secret*Dto` in dto.ts.
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SecretGetRequest {
+pub struct SecretKeyRequest {
     pub key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SecretGetResult {
-    pub value: Option<String>,
+pub struct SecretHasResult {
+    /// A non-empty value is stored under the key.
+    pub exists: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -87,8 +87,11 @@ pub fn run() {
             commands::ocr::ocr_image,
             commands::llm::llm_stream,
             commands::llm::llm_cancel,
-            commands::secrets::secret_get,
+            // Write-only secret access: the webview can ask "is it set?", set
+            // and delete — never read a value (architecture.md §11).
+            commands::secrets::secret_has,
             commands::secrets::secret_set,
+            commands::secrets::secret_delete,
             commands::audio::audio_start_capture,
             commands::audio::audio_stop_capture,
             commands::audio::transcribe_audio,

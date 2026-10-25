@@ -6,6 +6,8 @@ interface SettingsPanelProps {
   readonly status: ApiKeySaveStatus;
   readonly error: string | null;
   readonly onSave: (value: string) => void;
+  /** Remove the stored key (the keychain entry is deleted natively). */
+  readonly onClear: () => void;
 }
 
 /**
@@ -14,17 +16,17 @@ interface SettingsPanelProps {
  * Write-only by design: once saved, the key value is never read back into
  * this component (only whether one is configured). The renderer's only touch
  * of the actual secret is the moment it's typed here and handed to
- * `secret_set`; reading it back for display would needlessly extend how long
- * it lingers in webview memory, undermining the "secure-native" reasoning
- * that put it in the OS keychain in the first place (architecture.md §11).
+ * `secret_set`; there is no native command that could return it
+ * (architecture.md §11).
  */
-export function SettingsPanel({ hasKey, status, error, onSave }: SettingsPanelProps) {
+export function SettingsPanel({ hasKey, status, error, onSave, onClear }: SettingsPanelProps) {
   const [value, setValue] = useState('');
+  const busy = status === 'saving' || status === 'clearing';
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     const trimmed = value.trim();
-    if (!trimmed || status === 'saving') return;
+    if (!trimmed || busy) return;
     onSave(trimmed);
     setValue('');
   };
@@ -43,18 +45,30 @@ export function SettingsPanel({ hasKey, status, error, onSave }: SettingsPanelPr
         />
         <button
           type="submit"
-          disabled={!value.trim() || status === 'saving'}
+          disabled={!value.trim() || busy}
           className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
         >
           {status === 'saving' ? 'Saving…' : 'Save'}
         </button>
       </form>
-      <p className="mt-2 text-xs text-neutral-500">
-        {hasKey === null && 'Checking…'}
-        {hasKey === true && 'Key configured ✓'}
-        {hasKey === false && 'No key set yet — get one at openrouter.ai/keys'}
-      </p>
-      {error && <p className="mt-1 text-xs text-red-400">Failed to save: {error}</p>}
+      <div className="mt-2 flex items-center justify-between gap-2 text-xs text-neutral-500">
+        <p>
+          {hasKey === null && 'Checking…'}
+          {hasKey === true && 'Key configured ✓'}
+          {hasKey === false && 'No key set yet — get one at openrouter.ai/keys'}
+        </p>
+        {hasKey === true && (
+          <button
+            type="button"
+            onClick={onClear}
+            disabled={busy}
+            className="text-neutral-400 hover:text-red-300 disabled:opacity-50"
+          >
+            {status === 'clearing' ? 'Removing…' : 'Remove key'}
+          </button>
+        )}
+      </div>
+      {error && <p className="mt-1 text-xs text-red-400">Failed: {error}</p>}
     </div>
   );
 }
