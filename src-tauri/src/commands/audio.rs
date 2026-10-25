@@ -13,7 +13,12 @@ use crate::AppState;
 
 /// Start capturing loopback audio (the output device / interlocutor's voice).
 /// Reports the rolling window the recording keeps (the last N seconds).
-#[tauri::command]
+///
+/// `async` (here and on `audio_stop_capture`): sync commands run on the main
+/// thread; `start` joins a leftover capture thread and `stop` always joins it
+/// (up to the 200 ms event timeout), which would stall the event loop
+/// (2026-10 review §3.4).
+#[tauri::command(async)]
 pub fn audio_start_capture(state: State<'_, AppState>) -> Result<AudioStartResult, String> {
     state.audio.start()?;
     Ok(AudioStartResult {
@@ -22,7 +27,7 @@ pub fn audio_start_capture(state: State<'_, AppState>) -> Result<AudioStartResul
 }
 
 /// Stop capturing. Buffered audio is retained for the next `transcribe_audio`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn audio_stop_capture(state: State<'_, AppState>) -> Result<(), String> {
     state.audio.stop()
 }

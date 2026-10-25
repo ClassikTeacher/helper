@@ -7,7 +7,13 @@ use crate::AppState;
 /// under the mouse cursor (P0): on a multi-monitor setup the task is on the
 /// screen the user is looking at, not necessarily the primary one. Detection is
 /// best-effort — if it fails, the capturer falls back to the primary display.
-#[tauri::command]
+///
+/// `async`: a sync Tauri command runs on the MAIN thread, and this one does
+/// real work (WGC frame + BGRA→RGBA + area downscale + PNG encode of a
+/// 2560×1440 frame — hundreds of ms in debug), which froze the event loop
+/// (window drag, show/hide) for that long (2026-10 review §3.4). With the
+/// attribute it runs on the async runtime's pool instead.
+#[tauri::command(async)]
 pub fn capture_screen(
     app: AppHandle,
     state: State<'_, AppState>,

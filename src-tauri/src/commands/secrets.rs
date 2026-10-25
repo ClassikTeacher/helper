@@ -42,7 +42,10 @@ pub fn secret_is_set(store: &dyn SecretStore, key: &str) -> Result<bool, String>
     Ok(store.get(key)?.is_some_and(|value| !value.trim().is_empty()))
 }
 
-#[tauri::command]
+// All three are `async`: sync commands run on the main thread, and the
+// credential store is blocking OS I/O (2026-10 review §3.4).
+
+#[tauri::command(async)]
 pub fn secret_has(
     state: State<'_, AppState>,
     request: SecretKeyRequest,
@@ -55,13 +58,13 @@ pub fn secret_has(
 
 /// The one moment a secret value crosses the seam: INTO native, when the user
 /// types it in settings.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn secret_set(state: State<'_, AppState>, request: SecretSetRequest) -> Result<(), String> {
     ensure_allowed(&request.key)?;
     state.secrets.set(&request.key, &request.value)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn secret_delete(state: State<'_, AppState>, request: SecretKeyRequest) -> Result<(), String> {
     ensure_allowed(&request.key)?;
     state.secrets.delete(&request.key)
