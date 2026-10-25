@@ -20,6 +20,22 @@ request logging in your OpenRouter account settings; that part is not under the
 app's control. The STT upload (`/audio/transcriptions`) carries no provider
 preference — unverified whether the endpoint accepts one.
 
+## Security model (what secure-native does and does not cover)
+
+- The OpenRouter key lives in the OS keychain and is read only by native code at
+  the moment of the provider call. The webview has no command that returns a
+  secret value (`secret_has`/`secret_set`/`secret_delete` only, keys allow-listed),
+  so a compromised renderer (XSS, a malicious npm dependency) cannot read it.
+- That boundary is the webview. The Windows Credential Manager entry is readable
+  by any process running as the same user — same as every desktop app's secrets;
+  protecting against a compromised user account is out of scope.
+- The webview's IPC surface is kept to what the use-cases need: screen capture,
+  LLM/STT streaming, write-only secrets, overlay, global hotkeys, clipboard read
+  (paste-code hotkey), key/value store. No SQL, no filesystem, no shell.
+- Model output, screenshot text and transcripts are untrusted input: links never
+  navigate, raw HTML is escaped, the webview may only load the app's own origin,
+  and the prompts treat on-screen/spoken text as data, not instructions.
+
 ## Stack
 
 Tauri v2 (Rust core) · React + Vite + TypeScript · Tailwind · Zustand · OpenRouter called from
