@@ -45,6 +45,11 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 - [ ] **Remove key:** ⚙ → "Remove key" clears the keychain entry (`cmdkey /list` shows no `ai-helper` entry); the amber "No OpenRouter API key" banner returns
 - [ ] Cancelling mid-stream stops output
 
+### Security — links in answers (2026-10)
+- [ ] Ask something whose answer contains a link (e.g. "дай ссылку на документацию Go по context"): the link renders as text with its URL in grey, is not clickable, and the HUD stays on its page
+- [ ] Defense in depth: in devtools run `location.href = 'https://example.com'` — the HUD does NOT navigate; the terminal running `pnpm tauri dev` logs `[overlay] blocked navigation to https://example.com/`
+- [ ] The window still behaves as before (starts hidden, hotkeys show it, transparent/always-on-top, drag by header, content-protected) — it is now created in `setup()` from the same `tauri.conf.json` entry (`create: false`)
+
 ### Privacy — provider data policy (2026-10)
 - [ ] Every model of the light/heavy chains still answers with the default `provider.data_collection=deny` (the OpenRouter activity log shows the served provider); if a chain model becomes unroutable, pick another provider/model rather than `AI_HELPER_DATA_COLLECTION=allow`
 - [ ] With `AI_HELPER_ZDR=true` at least the primary model answers (ZDR endpoints are fewer)

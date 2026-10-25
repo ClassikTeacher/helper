@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "AI-Helper",
         "width": 600,
         "height": 520,
