@@ -261,6 +261,53 @@ describe('registerHotkeys', () => {
     expect(useHudStore.getState().answer).toContain('fake answer');
   });
 
+  it('stop = send with a SILENT recording and nothing staged sends nothing and says so', async () => {
+    // 2026-10 review §3.2: the native silence gate returns an empty transcript
+    // for a silent clip; with no screenshots/code/hints there is no question —
+    // no fresh capture, no model call, a clear message instead.
+    const hotkey = new FakeHotkeyPort();
+    const overlay = createFakeOverlay();
+    const transcribeAudio = new TranscribeAudioUseCase(new FakeAudioAdapter(''));
+    const analyzeScreenshot = createAnalyzeScreenshot();
+    const analyzeSpy = vi.spyOn(analyzeScreenshot, 'execute');
+
+    await registerHotkeys(
+      createContainer(hotkey, overlay, undefined, analyzeScreenshot, transcribeAudio),
+    );
+    hotkey.press(RECORD_ACCELERATOR); // start
+    await flush();
+    hotkey.press(RECORD_ACCELERATOR); // stop = send
+    await flush();
+
+    expect(analyzeSpy).not.toHaveBeenCalled();
+    expect(useHudStore.getState().error).toContain('не распознано речи');
+    expect(useHudStore.getState().recording).toBe(false);
+    expect(useHudStore.getState().transcribing).toBe(false);
+    expect(useHudStore.getState().streaming).toBe(false);
+  });
+
+  it('a silent recording still sends when screenshots are staged (the shots are the question)', async () => {
+    const hotkey = new FakeHotkeyPort();
+    const overlay = createFakeOverlay();
+    const transcribeAudio = new TranscribeAudioUseCase(new FakeAudioAdapter(''));
+    const analyzeScreenshot = createAnalyzeScreenshot();
+    const analyzeSpy = vi.spyOn(analyzeScreenshot, 'execute');
+
+    await registerHotkeys(
+      createContainer(hotkey, overlay, undefined, analyzeScreenshot, transcribeAudio),
+    );
+    hotkey.press(CAPTURE_ACCELERATOR);
+    await flush();
+    hotkey.press(RECORD_ACCELERATOR);
+    await flush();
+    hotkey.press(RECORD_ACCELERATOR); // stop = send
+    await flush();
+
+    expect(analyzeSpy).toHaveBeenCalledWith(expect.objectContaining({ transcript: '' }));
+    expect(useHudStore.getState().error).toBeNull();
+    expect(useHudStore.getState().answer).toContain('fake answer');
+  });
+
   it('send hotkey attaches the transcript when recording is active', async () => {
     const hotkey = new FakeHotkeyPort();
     const overlay = createFakeOverlay();

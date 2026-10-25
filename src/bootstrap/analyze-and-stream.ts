@@ -43,6 +43,9 @@ type RunUseCases = Pick<AppContainer['useCases'], 'analyzeScreenshot'> &
  */
 export async function analyzeAndStream(useCases: RunUseCases, params: AnalyzeAndStreamParams): Promise<void> {
   const history = useHudStore.getState().dialogs[params.agent.id]?.turns ?? [];
+  const wasRecording = useHudStore.getState().recording;
+  const nothingStaged =
+    (params.screenshots?.length ?? 0) === 0 && !params.codeText?.trim() && !params.instructions.trim();
   let sent: SentPrompt = { userText: '' };
   await streamRun({
     agentId: params.agent.id,
@@ -52,6 +55,13 @@ export async function analyzeAndStream(useCases: RunUseCases, params: AnalyzeAnd
     // rides along in the same request as the screenshots. An STT failure throws
     // here and is surfaced via `fail` — it does NOT get swallowed.
     prepare: () => collectTranscript(useCases),
+    // An audio-only send whose recording turned out silent (nothing captured,
+    // or the native silence gate dropped it — 2026-10 review §3.2) has no
+    // question in it: don't spend a fresh capture + a model call on it, say so.
+    check: (transcript) =>
+      wasRecording && nothingStaged && !transcript.trim()
+        ? 'В записи не распознано речи — отправлять нечего. Сделайте скриншот, вставьте код или запишите ещё раз.'
+        : null,
     source: (transcript, hooks) =>
       useCases.analyzeScreenshot.execute({
         ...params,
@@ -130,6 +140,11 @@ interface RunSpec {
   readonly hint: string;
   /** Work before streaming (e.g. STT); its result is handed to `source`. */
   readonly prepare: () => Promise<string>;
+  /**
+   * Last gate before anything is sent: given the prepared value, an error
+   * message means "do not run" (shown via `fail`, the inputs stay intact).
+   */
+  readonly check?: (prepared: string) => string | null;
   readonly source: (
     prepared: string,
     hooks: { readonly signal: AbortSignal; readonly onFinish: (finish: LlmFinish) => void },
@@ -151,6 +166,11 @@ async function streamRun(spec: RunSpec): Promise<void> {
   try {
     const prepared = await spec.prepare();
     if (signal.aborted) return settleAborted(signal);
+    const blocked = spec.check?.(prepared) ?? null;
+    if (blocked) {
+      useHudStore.getState().fail(blocked);
+      return;
+    }
 
     useHudStore.getState().startStreaming();
     // Display-only copy of what was applied to this run.

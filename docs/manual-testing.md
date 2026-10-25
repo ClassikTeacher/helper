@@ -72,6 +72,10 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 - [ ] **Recording window:** record > 60 s (`AI_HELPER_MAX_RECORDING_SECS` to shorten) — the HUD clock keeps running and shows "в запрос уйдут последние N с"; the transcript contains the END of the speech, not the beginning
 - [ ] **Multi-monitor:** with the mouse on the second monitor, the capture hotkey captures THAT monitor
 - [ ] **STT vocabulary:** say "горутина", "мьютекс", "Kafka", "JOIN" — they come out spelled as terms; `AI_HELPER_STT_PROMPT=off` / `AI_HELPER_STT_LANGUAGE=auto` still transcribe
+- [ ] **Silence gate (2026-10):** record ~5 s with nothing playing, press record again (stop = send) with nothing staged — the HUD says "В записи не распознано речи — отправлять нечего", the OpenRouter activity log shows NO transcription and NO chat request; with a screenshot staged the same silent recording still sends the screenshot (empty transcript)
+- [ ] **Silence gate off:** with `AI_HELPER_STT_SILENCE_DBFS=off` the silent clip IS uploaded (activity log shows the transcription call); the previous default behaviour is back
+- [ ] **Trim:** record 3 s silence + a sentence + 3 s silence — the transcript is complete (no clipped first/last word)
+- [ ] **No key:** remove the key (⚙ → Remove key), record and stop — the error is "OpenRouter API key is not set"; re-add the key, record again — works (the recorder was not left broken)
 - [ ] **Follow-up:** replaced by dialogs — see "Dialogs (2026-10)" below
 - [ ] **Screen transcription:** with `VITE_AUTO_TRANSCRIBE=reviewer`, a Review shows "распознаю код…" first; with a bogus `VITE_TRANSCRIBE_MODEL` the review still arrives (screenshots only)
 - [ ] **Code blocks:** answers show highlighted code with a "копировать" button; pasting after it gives the exact code

@@ -8,7 +8,7 @@ use tauri::State;
 
 use crate::commands::secrets::OPENROUTER_API_KEY_SECRET;
 use crate::dto::{AudioStartResult, TranscribeResult};
-use crate::infra::audio::samples_to_wav;
+use crate::infra::audio::{prepare_stt_audio, silence_threshold_from_env};
 use crate::AppState;
 
 /// Start capturing loopback audio (the output device / interlocutor's voice).
@@ -27,12 +27,20 @@ pub fn audio_stop_capture(state: State<'_, AppState>) -> Result<(), String> {
     state.audio.stop()
 }
 
-/// Drain the captured audio, encode it as a 16 kHz mono WAV, and transcribe it
-/// via OpenRouter. Returns an empty transcript when nothing was captured (e.g.
-/// the user toggled recording off, or the output was silent) — that is not an
-/// error, it just means there is no audio context to attach.
+/// Drain the captured audio, gate/trim its silence, encode it as a 16 kHz mono
+/// WAV, and transcribe it via OpenRouter. Returns an empty transcript when
+/// there is nothing to transcribe — nothing captured, the clip is silent
+/// (2026-10 review §3.2), or STT returned a known hallucination — that is not
+/// an error, it just means there is no audio context to attach.
 #[tauri::command]
 pub async fn transcribe_audio(state: State<'_, AppState>) -> Result<TranscribeResult, String> {
+    // The key is checked BEFORE the buffer is drained: with no key the audio
+    // stays recorded instead of being thrown away with the error.
+    let api_key = match state.secrets.get(OPENROUTER_API_KEY_SECRET)? {
+        Some(key) if !key.trim().is_empty() => key,
+        _ => return Err("OpenRouter API key is not set. Add it in settings.".to_string()),
+    };
+
     let recorded = state.audio.take_audio()?;
     if recorded.samples.is_empty() {
         return Ok(TranscribeResult {
@@ -40,11 +48,16 @@ pub async fn transcribe_audio(state: State<'_, AppState>) -> Result<TranscribeRe
         });
     }
 
-    let wav = samples_to_wav(&recorded.samples, recorded.sample_rate, recorded.channels);
-
-    let api_key = match state.secrets.get(OPENROUTER_API_KEY_SECRET)? {
-        Some(key) if !key.trim().is_empty() => key,
-        _ => return Err("OpenRouter API key is not set. Add it in settings.".to_string()),
+    let Some(wav) = prepare_stt_audio(
+        &recorded.samples,
+        recorded.sample_rate,
+        recorded.channels,
+        silence_threshold_from_env(),
+    ) else {
+        // Silent clip: no upload, no hallucinated "question".
+        return Ok(TranscribeResult {
+            text: String::new(),
+        });
     };
 
     let text = state.stt.transcribe(&api_key, wav).await?;

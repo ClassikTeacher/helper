@@ -107,6 +107,60 @@ fn is_retryable_status(status: u16) -> bool {
     matches!(status, 408 | 409 | 425 | 429) || (500..=599).contains(&status)
 }
 
+/// Phrases Whisper is known to emit on silence or noise instead of a transcript
+/// — artifacts of its training data (video outros, subtitle credits). The
+/// silence gate in `infra::audio` is the primary defense; this catches what
+/// still slips through (e.g. music, keyboard noise). Matched after
+/// normalization (lowercase, letters/digits only) against the WHOLE transcript,
+/// possibly repeated — never as a substring of real speech.
+const HALLUCINATIONS: &[&str] = &[
+    "субтитры сделал dimatorzok",
+    "субтитры делал dimatorzok",
+    "субтитры создавал dimatorzok",
+    "субтитры добавил dimatorzok",
+    "редактор субтитров а семкин корректор а егорова",
+    "редактор субтитров а семкин",
+    "корректор а егорова",
+    "продолжение следует",
+    "спасибо за просмотр",
+    "спасибо за внимание",
+    "подписывайтесь на канал",
+    "ставьте лайк",
+    "до новых встреч",
+    "до свидания",
+    "thank you for watching",
+    "thanks for watching",
+    "please subscribe",
+    "subtitles by the amara org community",
+    "subtitles by",
+    "the end",
+    "you",
+];
+
+/// Lowercase, letters/digits only (any script), single spaces.
+fn normalize_transcript(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Whether `text` is one of the known hallucination phrases (or only that
+/// phrase repeated) rather than speech. Empty/blank counts as nothing said.
+pub fn is_hallucination(text: &str) -> bool {
+    let normalized = normalize_transcript(text);
+    if normalized.is_empty() {
+        return true;
+    }
+    HALLUCINATIONS.iter().any(|phrase| {
+        let phrase = normalize_transcript(phrase);
+        !phrase.is_empty() && normalized.replace(&phrase, "").trim().is_empty()
+    })
+}
+
 /// Outcome of a single transcription attempt, telling the retry loop whether to
 /// try again.
 enum Outcome {
@@ -152,6 +206,12 @@ impl SttClient {
             attempts += 1;
             let fields = form_fields(language.as_deref(), prompt.as_deref());
             match self.transcribe_once(api_key, wav.clone(), fields).await {
+                Outcome::Done(text) if is_hallucination(&text) => {
+                    // Not speech — report "nothing said" rather than feed the
+                    // prompt a phrase the model will treat as the question.
+                    eprintln!("[stt] dropped a likely hallucination: {text:?}");
+                    return Ok(String::new());
+                }
                 Outcome::Done(text) => return Ok(text),
                 Outcome::Retry(err) => last_err = err, // drop this request, retry
                 // The vocabulary prompt is an optional nicety: if the request was
@@ -317,6 +377,34 @@ mod tests {
         assert_eq!(resolve_prompt(Some("Rust, borrow checker")).as_deref(), Some("Rust, borrow checker"));
         // Whisper's prompt limit is 224 tokens; stay far below it.
         assert!(DEFAULT_STT_PROMPT.chars().count() < 500);
+    }
+
+    #[test]
+    fn hallucination_phrases_are_dropped_whole_or_repeated_in_any_casing() {
+        for text in [
+            "Субтитры сделал DimaTorzok",
+            "Продолжение следует...",
+            "Продолжение следует... Продолжение следует...",
+            "Редактор субтитров А.Семкин Корректор А.Егорова",
+            "Thank you for watching!",
+            "you",
+            "   ",
+        ] {
+            assert!(is_hallucination(text), "{text:?} should be dropped");
+        }
+    }
+
+    #[test]
+    fn real_speech_is_never_mistaken_for_a_hallucination() {
+        for text in [
+            "а теперь реши без дополнительной памяти",
+            "you need to handle the empty input",
+            "спасибо за внимание, а теперь вопрос: что такое горутина?",
+            "the endpoint returns 200",
+            "субтитры тут ни при чём, покажи код",
+        ] {
+            assert!(!is_hallucination(text), "{text:?} is speech");
+        }
     }
 
     #[test]
