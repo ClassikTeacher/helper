@@ -5,6 +5,7 @@ import { useToggleRecording } from '@/ui/hooks/useToggleRecording';
 import { useStopRun } from '@/ui/hooks/useStopRun';
 import { useElapsedSeconds } from '@/ui/hooks/useElapsedSeconds';
 import { useApiKeySettings } from '@/ui/hooks/useApiKeySettings';
+import { useDiagnostics } from '@/ui/hooks/useDiagnostics';
 import { AGENT_LIST, resolveAgent } from '@/core/domain/agents-catalog';
 import { AgentSwitch } from './AgentSwitch';
 import { AudioControls } from './AudioControls';
@@ -53,6 +54,7 @@ export function Hud() {
   const toggleRecording = useToggleRecording();
   const stop = useStopRun(streaming);
   const apiKey = useApiKeySettings();
+  const diagnostics = useDiagnostics();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const selectedAgent = resolveAgent(agentId);
@@ -136,6 +138,8 @@ export function Hud() {
             error={apiKey.error}
             onSave={apiKey.save}
             onClear={apiKey.clear}
+            onCopyDiagnostics={() => void diagnostics.copy()}
+            diagnosticsStatus={diagnostics.status}
           />
         )}
         {/*

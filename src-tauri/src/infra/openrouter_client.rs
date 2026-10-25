@@ -216,6 +216,19 @@ impl OpenRouterClient {
         let body = build_request_body(request, &self.policy);
         let started = Instant::now();
         let first_byte_secs = self.timeouts.first_byte.as_secs_f64();
+        log::info!(
+            "llm_stream: model={} messages={} images={} reasoning={} max_edge={:?}",
+            request.model,
+            request.messages.len(),
+            request
+                .messages
+                .iter()
+                .flat_map(|m| m.parts.iter())
+                .filter(|p| matches!(p, LlmContentPart::Image { .. }))
+                .count(),
+            request.reasoning_effort.as_deref().unwrap_or("off"),
+            request.max_image_edge,
+        );
 
         // The response headers must arrive within the first-byte budget too.
         let send = self
@@ -299,6 +312,9 @@ impl OpenRouterClient {
             for event in drain_sse_events(&mut buf) {
                 let step = state.step(parse_sse_event(&event));
                 for chunk in step.chunks {
+                    if step.terminal {
+                        log_terminal(&chunk, started);
+                    }
                     let _ = channel.send(chunk);
                 }
                 if step.terminal {
@@ -312,7 +328,9 @@ impl OpenRouterClient {
         // leaving the webview awaiting a stream that ended. Provider closed the
         // stream without a terminator — a transient provider hiccup: retryable
         // (the webview only fails over if no content was produced).
-        let _ = channel.send(state.end_of_body());
+        let last = state.end_of_body();
+        log_terminal(&last, started);
+        let _ = channel.send(last);
     }
 }
 
@@ -332,7 +350,31 @@ impl Default for OpenRouterClient {
 }
 
 fn send_error(channel: &Channel<LlmChunk>, message: String, retryable: bool) {
+    log::warn!("llm_stream: error (retryable={retryable}): {message}");
     let _ = channel.send(LlmChunk::Error { message, retryable });
+}
+
+/// One log line per completed stream: outcome, model, tokens, cost, duration —
+/// never the content (logging policy, lib.rs).
+fn log_terminal(chunk: &LlmChunk, started: Instant) {
+    let ms = started.elapsed().as_millis();
+    match chunk {
+        LlmChunk::Finish { reason, usage, model } => log::info!(
+            "llm_stream: finish reason={reason} model={} tokens={} cost={} in {ms} ms",
+            model.as_deref().unwrap_or("?"),
+            usage
+                .as_ref()
+                .map_or("?".to_string(), |u| format!("{}->{}", u.input_tokens, u.output_tokens)),
+            usage
+                .as_ref()
+                .and_then(|u| u.cost)
+                .map_or("?".to_string(), |c| format!("{c:.4}")),
+        ),
+        LlmChunk::Error { message, retryable } => {
+            log::warn!("llm_stream: terminal error (retryable={retryable}) after {ms} ms: {message}")
+        }
+        LlmChunk::TextDelta { .. } => {}
+    }
 }
 
 /// Builds the OpenAI-compatible chat-completions request body. `usage.include`

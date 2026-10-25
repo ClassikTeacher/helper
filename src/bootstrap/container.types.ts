@@ -3,7 +3,9 @@ import type { CaptureScreenshotUseCase } from '@/core/application/use-cases/capt
 import type { SendPromptUseCase } from '@/core/application/use-cases/send-prompt.use-case';
 import type { ManageApiKeyUseCase } from '@/core/application/use-cases/manage-api-key.use-case';
 import type { TranscribeAudioUseCase } from '@/core/application/use-cases/transcribe-audio.use-case';
+import type { GetDiagnosticsUseCase } from '@/core/application/use-cases/get-diagnostics.use-case';
 import type { AudioTranscriptionPort } from '@/core/application/ports/audio-transcription.port';
+import type { DiagnosticsPort } from '@/core/application/ports/diagnostics.port';
 import type { OverlayPort } from '@/core/application/ports/overlay.port';
 import type { ClipboardPort } from '@/core/application/ports/clipboard.port';
 import type { HotkeyPort } from '@/core/application/ports/hotkey.port';
@@ -24,6 +26,8 @@ export interface AppContainer {
     readonly manageApiKey: ManageApiKeyUseCase;
     /** Loopback recording + cloud STT (phase 9). */
     readonly transcribeAudio: TranscribeAudioUseCase;
+    /** Bug-report text: version, platform, native log tail (⚙ → Copy diagnostics). */
+    readonly getDiagnostics: GetDiagnosticsUseCase;
   };
   readonly platform: {
     readonly overlay: OverlayPort;
@@ -42,4 +46,5 @@ export interface ContainerOverrides {
   readonly secrets?: SecretsPort;
   readonly audio?: AudioTranscriptionPort;
   readonly clipboard?: ClipboardPort;
+  readonly diagnostics?: DiagnosticsPort;
 }

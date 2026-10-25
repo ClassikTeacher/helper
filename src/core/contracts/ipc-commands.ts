@@ -46,6 +46,11 @@ export const IPC_COMMANDS = {
   overlayToggle: 'overlay_toggle',
   /** Reads the window's real OS-level visibility (native is the source of truth). */
   overlayIsVisible: 'overlay_is_visible',
+  /**
+   * Version, platform and the tail of the native log file, for bug reports
+   * (⚙ → "Copy diagnostics"). Returns a `DiagnosticsSnapshotDto`.
+   */
+  diagnosticsSnapshot: 'diagnostics_snapshot',
 } as const;
 
 export type IpcCommandName = (typeof IPC_COMMANDS)[keyof typeof IPC_COMMANDS];

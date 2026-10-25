@@ -241,11 +241,25 @@ impl SttClient {
                 Outcome::Done(text) if is_hallucination(&text) => {
                     // Not speech — report "nothing said" rather than feed the
                     // prompt a phrase the model will treat as the question.
-                    eprintln!("[stt] dropped a likely hallucination: {text:?}");
+                    // Logged by length only: transcripts never go to the log.
+                    log::info!(
+                        "stt: dropped a likely hallucination ({} chars) on attempt {attempts}",
+                        text.chars().count()
+                    );
                     return Ok(String::new());
                 }
-                Outcome::Done(text) => return Ok(text),
-                Outcome::Retry(err) => last_err = err, // drop this request, retry
+                Outcome::Done(text) => {
+                    log::info!(
+                        "stt: ok on attempt {attempts}, {} bytes up, {} chars back",
+                        wav.len(),
+                        text.chars().count()
+                    );
+                    return Ok(text);
+                }
+                Outcome::Retry(err) => {
+                    log::warn!("stt: attempt {attempts} failed, retrying: {err}");
+                    last_err = err; // drop this request, retry
+                }
                 // The vocabulary prompt is an optional nicety: if the request was
                 // rejected with it, drop it and try again rather than lose the audio.
                 Outcome::Rejected(err) if prompt.is_some() => {

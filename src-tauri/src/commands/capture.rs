@@ -23,7 +23,20 @@ pub fn capture_screen(
     if request.display_index.is_none() && request.display_name.is_none() {
         request.display_name = monitor_under_cursor(&app);
     }
-    state.capture.capture(&request)
+    let started = std::time::Instant::now();
+    let result = state.capture.capture(&request);
+    match &result {
+        Ok(shot) => log::info!(
+            "capture_screen: {}x{} ({} KB png) from {:?} in {} ms",
+            shot.width,
+            shot.height,
+            shot.image_base64.len() * 3 / 4 / 1024,
+            request.display_name.as_deref().unwrap_or("primary"),
+            started.elapsed().as_millis()
+        ),
+        Err(e) => log::warn!("capture_screen failed: {e}"),
+    }
+    result
 }
 
 /// OS device name of the monitor containing the cursor (physical coordinates).

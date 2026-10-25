@@ -20,6 +20,9 @@ importers:
       '@tauri-apps/plugin-global-shortcut':
         specifier: ^2.2.0
         version: 2.3.2
+      '@tauri-apps/plugin-log':
+        specifier: ^2.4.0
+        version: 2.10.1
       '@tauri-apps/plugin-store':
         specifier: ^2.2.0
         version: 2.4.3
@@ -908,6 +911,9 @@ packages:
   '@tauri-apps/api@2.11.1':
     resolution: {integrity: sha512-M2FPuYND2m+wh5hfW9ZpSdxMPdEJovPBWwoHJmwUpysTYNHaOkVFN419m/K0LIgjb/7KU2vBgsUepJWugQCvAA==}
 
+  '@tauri-apps/api@2.12.4':
+    resolution: {integrity: sha512-pVmfis+4zT8H0Qhp3xPZx9Ju7kpzvA6rr/PSJPyuwfvucTQ8sVt61NYU9KMkK703UFlYadFmjKA4HhybOtN0gg==}
+
   '@tauri-apps/cli-darwin-arm64@2.11.4':
     resolution: {integrity: sha512-1ryOF3ZhpZ/nemHV5zVwBQBz9jDGKmKPvWPADOhc83ig0P4bMc2iER4NbC6r9sjeIZ6RVQ4g3RZIYvezhcl4TQ==}
     engines: {node: '>= 10'}
@@ -984,6 +990,9 @@ packages:
 
   '@tauri-apps/plugin-global-shortcut@2.3.2':
     resolution: {integrity: sha512-UReHNXrLvpEjylE4jb4oCYiy96uRykPUthoCQCmRXYrd5hs5X9DrW+qOn7GLW57EJN4tdK8bgK5twBTz2NOxzA==}
+
+  '@tauri-apps/plugin-log@2.10.1':
+    resolution: {integrity: sha512-QYgxDunUZP+Cd3ev+8ItOc3Q6uUFkEhRHdTolxUtlC/8SGsc5IyVjGgFclprkAx736HUCUYfh2vqUr3qwNfTTw==}
 
   '@tauri-apps/plugin-store@2.4.3':
     resolution: {integrity: sha512-9LWPj9yMphRi9czEtUv87XHbl1b6xgd9EXpPrUnq6nG7+nbtoF84d4Kwz9xhAv/Hf30sr58pq7EOlyI936y8qw==}
@@ -3225,6 +3234,8 @@ snapshots:
 
   '@tauri-apps/api@2.11.1': {}
 
+  '@tauri-apps/api@2.12.4': {}
+
   '@tauri-apps/cli-darwin-arm64@2.11.4':
     optional: true
 
@@ -3279,6 +3290,10 @@ snapshots:
   '@tauri-apps/plugin-global-shortcut@2.3.2':
     dependencies:
       '@tauri-apps/api': 2.11.1
+
+  '@tauri-apps/plugin-log@2.10.1':
+    dependencies:
+      '@tauri-apps/api': 2.12.4
 
   '@tauri-apps/plugin-store@2.4.3':
     dependencies:

@@ -21,6 +21,10 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-store = "2"
 # R15: read clipboard text for the paste-code hotkey (`<code_text>` channel).
 tauri-plugin-clipboard-manager = "2"
+# Diagnostics (2026-10 review §5.5): native log file (rotating) + webview
+# console forwarding; `diagnostics_snapshot` returns its tail for bug reports.
+tauri-plugin-log = "2"
+log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"

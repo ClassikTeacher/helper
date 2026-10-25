@@ -47,7 +47,9 @@ pub async fn transcribe_audio(state: State<'_, AppState>) -> Result<TranscribeRe
     };
 
     let recorded = state.audio.take_audio()?;
+    let secs = recorded.samples.len() as f32 / (recorded.sample_rate.max(1) as f32 * recorded.channels.max(1) as f32);
     if recorded.samples.is_empty() {
+        log::info!("transcribe_audio: nothing captured");
         return Ok(TranscribeResult {
             text: String::new(),
         });
@@ -60,11 +62,18 @@ pub async fn transcribe_audio(state: State<'_, AppState>) -> Result<TranscribeRe
         silence_threshold_from_env(),
     ) else {
         // Silent clip: no upload, no hallucinated "question".
+        log::info!("transcribe_audio: {secs:.1} s captured, silent under the gate — not uploaded");
         return Ok(TranscribeResult {
             text: String::new(),
         });
     };
 
+    log::info!(
+        "transcribe_audio: {secs:.1} s captured @{} Hz x{}, {} KB after gate/trim",
+        recorded.sample_rate,
+        recorded.channels,
+        wav.len() / 1024
+    );
     let text = state.stt.transcribe(&api_key, wav).await?;
     Ok(TranscribeResult { text })
 }

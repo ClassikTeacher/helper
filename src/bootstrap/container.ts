@@ -7,6 +7,8 @@ import { CaptureScreenshotUseCase } from '@/core/application/use-cases/capture-s
 import { SendPromptUseCase } from '@/core/application/use-cases/send-prompt.use-case';
 import { ManageApiKeyUseCase } from '@/core/application/use-cases/manage-api-key.use-case';
 import { TranscribeAudioUseCase } from '@/core/application/use-cases/transcribe-audio.use-case';
+import { GetDiagnosticsUseCase } from '@/core/application/use-cases/get-diagnostics.use-case';
+import { isTauriWindow } from './platform';
 
 import type { LlmPort } from '@/core/application/ports/llm.port';
 import type { ScreenCapturePort } from '@/core/application/ports/screen-capture.port';
@@ -15,6 +17,7 @@ import type { HotkeyPort } from '@/core/application/ports/hotkey.port';
 import type { ClipboardPort } from '@/core/application/ports/clipboard.port';
 import type { SecretsPort } from '@/core/application/ports/secrets.port';
 import type { AudioTranscriptionPort } from '@/core/application/ports/audio-transcription.port';
+import type { DiagnosticsPort } from '@/core/application/ports/diagnostics.port';
 
 import { TauriScreenCaptureAdapter } from '@/infrastructure/tauri/tauri-screen-capture.adapter';
 import { TauriOverlayAdapter } from '@/infrastructure/tauri/tauri-overlay.adapter';
@@ -23,11 +26,13 @@ import { TauriLlmAdapter } from '@/infrastructure/tauri/tauri-llm.adapter';
 import { TauriSecretsAdapter } from '@/infrastructure/tauri/tauri-secrets.adapter';
 import { TauriAudioAdapter } from '@/infrastructure/tauri/tauri-audio.adapter';
 import { TauriClipboardAdapter } from '@/infrastructure/tauri/tauri-clipboard.adapter';
+import { TauriDiagnosticsAdapter } from '@/infrastructure/tauri/tauri-diagnostics.adapter';
 import { OpenRouterLlmAdapter } from '@/infrastructure/llm/openrouter-llm.adapter';
 import { FakeLlmAdapter } from '@/infrastructure/mocks/fake-llm.adapter';
 import { FakeScreenCaptureAdapter } from '@/infrastructure/mocks/fake-screen-capture.adapter';
 import { InMemorySecretsAdapter } from '@/infrastructure/mocks/in-memory-secrets.adapter';
 import { FakeAudioAdapter } from '@/infrastructure/mocks/fake-audio.adapter';
+import { FakeDiagnosticsAdapter } from '@/infrastructure/mocks/fake-diagnostics.adapter';
 
 import type { AppContainer, ContainerOverrides } from './container.types';
 
@@ -42,7 +47,7 @@ import type { AppContainer, ContainerOverrides } from './container.types';
  * text with no reader, no retention and no viewer.
  */
 export function createContainer(overrides: ContainerOverrides = {}): AppContainer {
-  const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  const isTauri = isTauriWindow();
 
   const screenCapture: ScreenCapturePort =
     overrides.screenCapture ?? (isTauri ? new TauriScreenCaptureAdapter() : new FakeScreenCaptureAdapter());
@@ -77,6 +82,10 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
   const hotkey: HotkeyPort = overrides.hotkey ?? (isTauri ? new TauriHotkeyAdapter() : noopHotkey);
   const clipboard: ClipboardPort =
     overrides.clipboard ?? (isTauri ? new TauriClipboardAdapter() : browserClipboard);
+  // Bug-report snapshot (2026-10 review §5.5): the native log tail in Tauri, a
+  // fixed stub in the browser.
+  const diagnostics: DiagnosticsPort =
+    overrides.diagnostics ?? (isTauri ? new TauriDiagnosticsAdapter() : new FakeDiagnosticsAdapter());
 
   return {
     useCases: {
@@ -85,6 +94,7 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
       sendPrompt: new SendPromptUseCase(llm),
       manageApiKey: new ManageApiKeyUseCase(secrets),
       transcribeAudio: new TranscribeAudioUseCase(audio),
+      getDiagnostics: new GetDiagnosticsUseCase(diagnostics),
     },
     platform: { overlay, hotkey, clipboard },
   };

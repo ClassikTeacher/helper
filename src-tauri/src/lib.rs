@@ -9,6 +9,7 @@ pub mod ports;
 pub mod services;
 
 use tauri::{Manager, Url, WebviewWindowBuilder};
+use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 
 use infra::openrouter_client::OpenRouterClient;
 use infra::stt_client::SttClient;
@@ -18,6 +19,19 @@ use services::capture_service::CaptureService;
 
 /// Label of the HUD window (`app.windows[].label` in tauri.conf.json).
 const MAIN_WINDOW_LABEL: &str = "main";
+
+/// Native log file (`<app_log_dir>/<stem>.log`, written by `tauri-plugin-log`).
+/// `diagnostics_snapshot` reads its tail.
+///
+/// LOGGING POLICY (2026-10 review §5.5): the log is meant to be pasted into a
+/// bug report, so it records *what happened*, never *what was said or shown*:
+/// command names, sizes, durations, model slugs, finish reasons, error
+/// messages — and never the API key, prompt text, screenshots, code text or
+/// transcripts (only their lengths).
+pub const LOG_FILE_STEM: &str = "ai-helper";
+
+/// Keep the log file small enough to paste: rotate at ~1 MB, keep one backup.
+const LOG_MAX_FILE_SIZE: u128 = 1_000_000;
 
 /// Application state injected into command handlers via `tauri::State`.
 pub struct AppState {
@@ -104,6 +118,20 @@ pub fn run() {
     // No `tauri-plugin-sql`: the SQLite dialog history was removed (2026-10
     // review §2.4) — dialogs are in-memory only and nothing is written to disk.
     builder
+        // Logging first, so the other plugins' own log lines are captured too.
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    Target::new(TargetKind::Stdout),
+                    Target::new(TargetKind::LogDir {
+                        file_name: Some(LOG_FILE_STEM.to_string()),
+                    }),
+                ])
+                .level(log::LevelFilter::Info)
+                .max_file_size(LOG_MAX_FILE_SIZE)
+                .rotation_strategy(RotationStrategy::KeepOne)
+                .build(),
+        )
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
         // R15: the paste-code hotkey reads the clipboard natively (a global
@@ -127,11 +155,17 @@ pub fn run() {
                 .on_navigation(move |url| {
                     let allowed = is_allowed_navigation(url, dev_url.as_ref());
                     if !allowed {
-                        eprintln!("[overlay] blocked navigation to {url}");
+                        log::warn!("overlay: blocked navigation to {url}");
                     }
                     allowed
                 })
                 .build()?;
+            log::info!(
+                "started v{} ({} {})",
+                app.package_info().version,
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            );
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -151,6 +185,7 @@ pub fn run() {
             commands::overlay_hide,
             commands::overlay_toggle,
             commands::overlay_is_visible,
+            commands::diagnostics::diagnostics_snapshot,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

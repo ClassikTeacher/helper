@@ -1,6 +1,8 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { createContainer } from '@/bootstrap/container';
+import { installLogForwarding } from '@/bootstrap/install-log-forwarding';
+import { isTauriWindow } from '@/bootstrap/platform';
 import { seedDevApiKey } from '@/bootstrap/seed-dev-api-key';
 import { ServicesProvider } from '@/bootstrap/ServicesProvider';
 import { App } from '@/ui/App';
@@ -10,6 +12,10 @@ import '@/ui/styles/index.css';
 // container (bootstrap/).
 const rootEl = document.getElementById('root');
 if (!rootEl) throw new Error('Root element #root not found');
+
+// Webview console errors/warnings go to the native log file too (only inside
+// Tauri — the plugin's IPC does not exist in a plain browser).
+if (isTauriWindow()) installLogForwarding();
 
 const container = createContainer();
 

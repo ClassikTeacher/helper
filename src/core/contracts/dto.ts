@@ -156,3 +156,15 @@ export interface TranscribeResultDto {
   /** Recognized transcript (may be empty if nothing was captured). */
   readonly text: string;
 }
+
+// --- Diagnostics (2026-10 review §5.5) --------------------------------------
+/** Result of `diagnosticsSnapshot`. Mirror of `DiagnosticsSnapshot` in dto.rs. */
+export interface DiagnosticsSnapshotDto {
+  readonly appVersion: string;
+  readonly os: string;
+  readonly arch: string;
+  /** Where the native log file lives. */
+  readonly logPath: string;
+  /** The last lines of that file (never secrets/prompts/transcripts). */
+  readonly logTail: string;
+}

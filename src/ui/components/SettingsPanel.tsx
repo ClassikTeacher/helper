@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import type { ApiKeySaveStatus } from '@/ui/hooks/useApiKeySettings';
+import type { DiagnosticsCopyStatus } from '@/ui/hooks/useDiagnostics';
 
 interface SettingsPanelProps {
   readonly hasKey: boolean | null;
@@ -8,10 +9,14 @@ interface SettingsPanelProps {
   readonly onSave: (value: string) => void;
   /** Remove the stored key (the keychain entry is deleted natively). */
   readonly onClear: () => void;
+  /** Copy the diagnostics text (version, platform, native log tail) to the clipboard. */
+  readonly onCopyDiagnostics: () => void;
+  readonly diagnosticsStatus: DiagnosticsCopyStatus;
 }
 
 /**
- * Presentational: OpenRouter API key entry — props in, callback out, no I/O.
+ * Presentational: OpenRouter API key entry + diagnostics — props in, callbacks
+ * out, no I/O.
  *
  * Write-only by design: once saved, the key value is never read back into
  * this component (only whether one is configured). The renderer's only touch
@@ -19,7 +24,15 @@ interface SettingsPanelProps {
  * `secret_set`; there is no native command that could return it
  * (architecture.md §11).
  */
-export function SettingsPanel({ hasKey, status, error, onSave, onClear }: SettingsPanelProps) {
+export function SettingsPanel({
+  hasKey,
+  status,
+  error,
+  onSave,
+  onClear,
+  onCopyDiagnostics,
+  diagnosticsStatus,
+}: SettingsPanelProps) {
   const [value, setValue] = useState('');
   const busy = status === 'saving' || status === 'clearing';
 
@@ -69,6 +82,24 @@ export function SettingsPanel({ hasKey, status, error, onSave, onClear }: Settin
         )}
       </div>
       {error && <p className="mt-1 text-xs text-red-400">Failed: {error}</p>}
+
+      <div className="mt-3 flex items-center justify-between gap-2 border-t border-neutral-700/70 pt-2 text-xs text-neutral-500">
+        <p>Diagnostics: version, platform and the last native log lines — no key, prompts or transcripts.</p>
+        <button
+          type="button"
+          onClick={onCopyDiagnostics}
+          disabled={diagnosticsStatus === 'copying'}
+          className="shrink-0 rounded border border-neutral-600 px-2 py-0.5 text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+        >
+          {diagnosticsStatus === 'copying'
+            ? 'Copying…'
+            : diagnosticsStatus === 'copied'
+              ? '✓ Copied'
+              : diagnosticsStatus === 'error'
+                ? 'Copy failed — retry'
+                : 'Copy diagnostics'}
+        </button>
+      </div>
     </div>
   );
 }

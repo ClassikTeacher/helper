@@ -218,6 +218,21 @@ pub struct TranscribeResult {
     pub text: String,
 }
 
+// --- Diagnostics (2026-10 review §5.5) --------------------------------------
+/// Result of `diagnostics_snapshot`: what the user pastes into a bug report.
+/// Mirror of `DiagnosticsSnapshotDto` in dto.ts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticsSnapshot {
+    pub app_version: String,
+    pub os: String,
+    pub arch: String,
+    /// Where the native log file lives, for the user.
+    pub log_path: String,
+    /// The last lines of that file (no secrets/prompts/transcripts are ever logged).
+    pub log_tail: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
