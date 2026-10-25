@@ -46,8 +46,9 @@ keyring = { version = "3", features = ["windows-native"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "multipart"] }
 futures-util = "0.3"
 # LLM request cancellation (llm_cancel): `sync::Notify` wakes the streaming
-# future. Already in the tree via tauri — no new crate.
-tokio = { version = "1", features = ["sync"] }
+# future; `time` for the stream watchdog (first-byte / idle timeouts, see
+# openrouter_client.rs). Already in the tree via tauri — no new crate.
+tokio = { version = "1", features = ["sync", "time"] }
 
 # wasapi (phase 9): WASAPI loopback capture of the OUTPUT device (interlocutor's
 # voice) for cloud STT. cpal was the original plan but has NO Windows loopback
@@ -58,7 +59,8 @@ tokio = { version = "1", features = ["sync"] }
 wasapi = "0.23"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+# `net`/`io-util`: the stream-watchdog tests run a tiny local HTTP server.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
 
 [[example]]
 name = "spike_scap"

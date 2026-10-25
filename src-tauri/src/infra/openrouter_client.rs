@@ -7,6 +7,8 @@
 //! and every failure path (HTTP error, network error, malformed stream) is
 //! delivered as a terminal `LlmChunk::Error` instead of a process exit.
 
+use std::time::{Duration, Instant};
+
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 use tauri::ipc::Channel;
@@ -14,6 +16,85 @@ use tauri::ipc::Channel;
 use crate::dto::{LlmChunk, LlmContentPart, LlmMessage, LlmRole, LlmStreamRequest, LlmUsage};
 
 const OPENROUTER_CHAT_COMPLETIONS_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
+
+/// TCP/TLS connect timeout (`AI_HELPER_LLM_CONNECT_TIMEOUT_MS`).
+const CONNECT_TIMEOUT_ENV: &str = "AI_HELPER_LLM_CONNECT_TIMEOUT_MS";
+const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 10_000;
+/// Time allowed from sending the request until the FIRST byte of the response
+/// body (`AI_HELPER_LLM_FIRST_BYTE_TIMEOUT_MS`).
+const FIRST_BYTE_TIMEOUT_ENV: &str = "AI_HELPER_LLM_FIRST_BYTE_TIMEOUT_MS";
+const DEFAULT_FIRST_BYTE_TIMEOUT_MS: u64 = 30_000;
+/// Longest silence tolerated between two body chunks once streaming
+/// (`AI_HELPER_LLM_IDLE_TIMEOUT_MS`).
+const IDLE_TIMEOUT_ENV: &str = "AI_HELPER_LLM_IDLE_TIMEOUT_MS";
+const DEFAULT_IDLE_TIMEOUT_MS: u64 = 60_000;
+
+/// Watchdog for the streaming request (2026-10 review §3.1). Without it a
+/// provider that accepts the connection and then hangs kept `llm_stream` open
+/// forever: no error chunk, hence no failover — exactly the "provider is
+/// down" case the failover exists for; only a manual Stop helped.
+///
+/// The watchdog counts BYTES, not tokens: OpenRouter sends `: OPENROUTER
+/// PROCESSING` keep-alive comments while the model is still thinking, so a
+/// long reasoning phase keeps resetting the idle timer and is never mistaken
+/// for a hang, while a dead connection (no bytes at all) is. A timeout before
+/// the first text delta is reported as a retryable error, so `ResilientLlm`
+/// moves on to the next model; after content has streamed the same error just
+/// ends the answer ("Interrupted" in the HUD).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamTimeouts {
+    pub connect: Duration,
+    pub first_byte: Duration,
+    pub idle: Duration,
+}
+
+impl Default for StreamTimeouts {
+    fn default() -> Self {
+        Self {
+            connect: Duration::from_millis(DEFAULT_CONNECT_TIMEOUT_MS),
+            first_byte: Duration::from_millis(DEFAULT_FIRST_BYTE_TIMEOUT_MS),
+            idle: Duration::from_millis(DEFAULT_IDLE_TIMEOUT_MS),
+        }
+    }
+}
+
+impl StreamTimeouts {
+    /// The timeouts from the process environment (see the `*_ENV` constants).
+    pub fn from_env() -> Self {
+        resolve_timeouts(
+            std::env::var(CONNECT_TIMEOUT_ENV).ok().as_deref(),
+            std::env::var(FIRST_BYTE_TIMEOUT_ENV).ok().as_deref(),
+            std::env::var(IDLE_TIMEOUT_ENV).ok().as_deref(),
+        )
+    }
+}
+
+/// Parses the env overrides: a positive integer of milliseconds, anything
+/// else (unset, blank, zero, garbage) keeps the default. Pure — unit-tested.
+fn resolve_timeouts(connect: Option<&str>, first_byte: Option<&str>, idle: Option<&str>) -> StreamTimeouts {
+    let defaults = StreamTimeouts::default();
+    let pick = |raw: Option<&str>, default: Duration| {
+        raw.and_then(|v| v.trim().parse::<u64>().ok())
+            .filter(|&ms| ms > 0)
+            .map_or(default, Duration::from_millis)
+    };
+    StreamTimeouts {
+        connect: pick(connect, defaults.connect),
+        first_byte: pick(first_byte, defaults.first_byte),
+        idle: pick(idle, defaults.idle),
+    }
+}
+
+/// How long to wait for the next body chunk: the remainder of the first-byte
+/// budget (measured from when the request was sent) until anything arrived,
+/// then the idle gap. Pure — unit-tested.
+fn next_chunk_wait(timeouts: &StreamTimeouts, started: Instant, now: Instant, received_any: bool) -> Duration {
+    if received_any {
+        timeouts.idle
+    } else {
+        timeouts.first_byte.saturating_sub(now.saturating_duration_since(started))
+    }
+}
 
 /// `provider.data_collection` override: `deny` (default) or `allow`.
 const DATA_COLLECTION_ENV: &str = "AI_HELPER_DATA_COLLECTION";
@@ -90,13 +171,33 @@ fn provider_preferences(policy: &ProviderPolicy) -> Option<Value> {
 pub struct OpenRouterClient {
     http: reqwest::Client,
     policy: ProviderPolicy,
+    timeouts: StreamTimeouts,
+    chat_url: String,
 }
 
 impl OpenRouterClient {
     pub fn new() -> Self {
+        Self::with_config(
+            OPENROUTER_CHAT_COMPLETIONS_URL,
+            ProviderPolicy::from_env(),
+            StreamTimeouts::from_env(),
+        )
+    }
+
+    /// Explicit configuration — production uses `new()`; tests point `chat_url`
+    /// at a local server and shrink the timeouts.
+    pub fn with_config(chat_url: &str, policy: ProviderPolicy, timeouts: StreamTimeouts) -> Self {
+        let http = reqwest::Client::builder()
+            .connect_timeout(timeouts.connect)
+            .build()
+            // Building only fails on a broken TLS backend; the plain client
+            // would fail the same way, just without the connect timeout.
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
-            http: reqwest::Client::new(),
-            policy: ProviderPolicy::from_env(),
+            http,
+            policy,
+            timeouts,
+            chat_url: chat_url.to_string(),
         }
     }
 
@@ -113,20 +214,30 @@ impl OpenRouterClient {
         channel: &Channel<LlmChunk>,
     ) {
         let body = build_request_body(request, &self.policy);
+        let started = Instant::now();
+        let first_byte_secs = self.timeouts.first_byte.as_secs_f64();
 
-        let response = match self
+        // The response headers must arrive within the first-byte budget too.
+        let send = self
             .http
-            .post(OPENROUTER_CHAT_COMPLETIONS_URL)
+            .post(&self.chat_url)
             .bearer_auth(api_key)
             .json(&body)
-            .send()
-            .await
-        {
-            Ok(resp) => resp,
-            Err(e) => {
+            .send();
+        let response = match tokio::time::timeout(self.timeouts.first_byte, send).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(e)) => {
                 // Network/transport failure reaching OpenRouter — transient, so
                 // another model (or a retry) may well succeed: retryable.
                 send_error(channel, format!("OpenRouter request failed: {e}"), true);
+                return;
+            }
+            Err(_) => {
+                send_error(
+                    channel,
+                    format!("OpenRouter did not respond within {first_byte_secs:.0}s"),
+                    true,
+                );
                 return;
             }
         };
@@ -150,8 +261,30 @@ impl OpenRouterClient {
         let mut buf: Vec<u8> = Vec::new();
         let mut stream = response.bytes_stream();
         let mut state = StreamState::default();
+        let mut received_any = false;
 
-        while let Some(item) = stream.next().await {
+        loop {
+            // Watchdog: the rest of the first-byte budget until the body starts,
+            // then the idle gap between chunks (keep-alive comments count).
+            let wait = next_chunk_wait(&self.timeouts, started, Instant::now(), received_any);
+            let item = match tokio::time::timeout(wait, stream.next()).await {
+                Ok(Some(item)) => item,
+                Ok(None) => break,
+                Err(_) => {
+                    let message = if received_any {
+                        format!(
+                            "OpenRouter stream stalled: no data for {:.0}s",
+                            self.timeouts.idle.as_secs_f64()
+                        )
+                    } else {
+                        format!("OpenRouter sent no data within {first_byte_secs:.0}s")
+                    };
+                    // A stall is provider-side and transient: retryable, so a
+                    // pre-content stall fails over to the next model.
+                    send_error(channel, message, true);
+                    return;
+                }
+            };
             let bytes = match item {
                 Ok(b) => b,
                 Err(e) => {
@@ -160,6 +293,7 @@ impl OpenRouterClient {
                     return;
                 }
             };
+            received_any = true;
             buf.extend_from_slice(&bytes);
 
             for event in drain_sse_events(&mut buf) {
@@ -982,6 +1116,188 @@ mod tests {
             let body = build_request_body(&dialog_request(model), &ProviderPolicy::default());
             let serialized = body.to_string();
             assert!(!serialized.contains("cache_control"), "{model}: {serialized}");
+        }
+    }
+
+    // --- Stream watchdog (2026-10 review §3.1) -----------------------------
+
+    #[test]
+    fn stream_timeouts_env_overrides_apply_only_when_positive_integers() {
+        let d = StreamTimeouts::default();
+        assert_eq!(resolve_timeouts(None, None, None), d);
+        assert_eq!(resolve_timeouts(Some(""), Some("0"), Some("soon")), d);
+        assert_eq!(
+            resolve_timeouts(Some(" 5000 "), Some("15000"), Some("90000")),
+            StreamTimeouts {
+                connect: Duration::from_millis(5000),
+                first_byte: Duration::from_millis(15000),
+                idle: Duration::from_millis(90000),
+            }
+        );
+    }
+
+    #[test]
+    fn next_chunk_wait_spends_the_first_byte_budget_then_switches_to_the_idle_gap() {
+        let t = StreamTimeouts {
+            connect: Duration::from_secs(1),
+            first_byte: Duration::from_millis(300),
+            idle: Duration::from_millis(1000),
+        };
+        let started = Instant::now();
+        assert_eq!(next_chunk_wait(&t, started, started, false), Duration::from_millis(300));
+        assert_eq!(
+            next_chunk_wait(&t, started, started + Duration::from_millis(100), false),
+            Duration::from_millis(200)
+        );
+        // Budget exhausted: zero wait, the very next poll times out.
+        assert_eq!(next_chunk_wait(&t, started, started + Duration::from_secs(5), false), Duration::ZERO);
+        // Once anything arrived, every chunk gets the full idle gap.
+        assert_eq!(next_chunk_wait(&t, started, started + Duration::from_secs(5), true), Duration::from_millis(1000));
+    }
+
+    // Live-socket scenarios: a tiny local HTTP/1.1 server drives the client's
+    // real `reqwest` path, so the timeouts are exercised exactly as in
+    // production (minus TLS). Bodies are "until close" (no Content-Length).
+    mod watchdog {
+        use super::*;
+        use std::future::Future;
+        use std::sync::{Arc, Mutex};
+        use tauri::ipc::InvokeResponseBody;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::{TcpListener, TcpStream};
+
+        const HEADERS: &[u8] =
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
+        const DELTA: &[u8] = b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n";
+        const DONE: &[u8] = b"data: [DONE]\n\n";
+
+        fn fast() -> StreamTimeouts {
+            StreamTimeouts {
+                connect: Duration::from_secs(2),
+                first_byte: Duration::from_millis(250),
+                idle: Duration::from_millis(150),
+            }
+        }
+
+        /// Serves exactly one connection with `handler`; returns the chat URL.
+        async fn serve_once<F, Fut>(handler: F) -> String
+        where
+            F: FnOnce(TcpStream) -> Fut + Send + 'static,
+            Fut: Future<Output = ()> + Send,
+        {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                if let Ok((stream, _)) = listener.accept().await {
+                    handler(stream).await;
+                }
+            });
+            format!("http://{addr}/api/v1/chat/completions")
+        }
+
+        /// Reads whatever the client sent first (headers + the small JSON body).
+        async fn read_request(stream: &mut TcpStream) {
+            let mut buf = vec![0u8; 8192];
+            let _ = stream.read(&mut buf).await;
+        }
+
+        /// Runs the client against `url` and returns every chunk it sent.
+        async fn collect(url: &str, timeouts: StreamTimeouts) -> Vec<LlmChunk> {
+            let chunks = Arc::new(Mutex::new(Vec::new()));
+            let sink = chunks.clone();
+            let channel = Channel::new(move |body: InvokeResponseBody| {
+                if let InvokeResponseBody::Json(json) = body {
+                    sink.lock().unwrap().push(serde_json::from_str::<LlmChunk>(&json).unwrap());
+                }
+                Ok(())
+            });
+            let client = OpenRouterClient::with_config(url, ProviderPolicy::default(), timeouts);
+            client.stream_chat("test-key", &text_request(), &channel).await;
+            let out = chunks.lock().unwrap().clone();
+            out
+        }
+
+        fn is_retryable_error(chunk: &LlmChunk, needle: &str) -> bool {
+            matches!(chunk, LlmChunk::Error { message, retryable: true } if message.contains(needle))
+        }
+
+        #[tokio::test]
+        async fn a_server_that_never_responds_fails_over_within_the_first_byte_budget() {
+            let url = serve_once(|mut s| async move {
+                read_request(&mut s).await;
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            })
+            .await;
+
+            let started = Instant::now();
+            let chunks = collect(&url, fast()).await;
+
+            assert!(started.elapsed() < Duration::from_secs(2), "took {:?}", started.elapsed());
+            assert_eq!(chunks.len(), 1, "{chunks:?}");
+            assert!(is_retryable_error(&chunks[0], "did not respond"), "{chunks:?}");
+        }
+
+        #[tokio::test]
+        async fn headers_without_any_body_time_out_as_a_retryable_error() {
+            let url = serve_once(|mut s| async move {
+                read_request(&mut s).await;
+                s.write_all(HEADERS).await.unwrap();
+                s.flush().await.unwrap();
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            })
+            .await;
+
+            let chunks = collect(&url, fast()).await;
+
+            assert_eq!(chunks.len(), 1, "{chunks:?}");
+            assert!(is_retryable_error(&chunks[0], "sent no data"), "{chunks:?}");
+        }
+
+        #[tokio::test]
+        async fn a_stall_after_content_ends_the_answer_with_a_retryable_error() {
+            let url = serve_once(|mut s| async move {
+                read_request(&mut s).await;
+                s.write_all(HEADERS).await.unwrap();
+                s.write_all(DELTA).await.unwrap();
+                s.flush().await.unwrap();
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            })
+            .await;
+
+            let chunks = collect(&url, fast()).await;
+
+            assert_eq!(chunks.len(), 2, "{chunks:?}");
+            assert_eq!(chunks[0], LlmChunk::TextDelta { delta: "hi".to_string() });
+            assert!(is_retryable_error(&chunks[1], "stalled"), "{chunks:?}");
+        }
+
+        #[tokio::test]
+        async fn keep_alive_comments_reset_the_idle_timer_while_the_model_thinks() {
+            // 6 × 60 ms of keep-alives = 360 ms of "no tokens" against a 150 ms
+            // idle gap: bytes keep flowing, so it must NOT time out.
+            let url = serve_once(|mut s| async move {
+                read_request(&mut s).await;
+                s.write_all(HEADERS).await.unwrap();
+                for _ in 0..6 {
+                    s.write_all(b": OPENROUTER PROCESSING\n\n").await.unwrap();
+                    s.flush().await.unwrap();
+                    tokio::time::sleep(Duration::from_millis(60)).await;
+                }
+                s.write_all(DELTA).await.unwrap();
+                s.write_all(DONE).await.unwrap();
+                s.flush().await.unwrap();
+            })
+            .await;
+
+            let chunks = collect(&url, fast()).await;
+
+            assert_eq!(
+                chunks,
+                vec![
+                    LlmChunk::TextDelta { delta: "hi".to_string() },
+                    LlmChunk::Finish { reason: "stop".to_string(), usage: None, model: None },
+                ]
+            );
         }
     }
 }
