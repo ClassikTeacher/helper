@@ -131,7 +131,14 @@ describe('buildTranscriberConfig', () => {
     expect([...buildTranscriberConfig()!.agents]).toEqual(['reviewer']);
     vi.stubEnv('VITE_AUTO_TRANSCRIBE', 'all');
     vi.stubEnv('VITE_TRANSCRIBE_MODEL', 'vendor/ocr');
-    expect(buildTranscriberConfig()).toEqual({ agents: new Set(['solver', 'reviewer']), model: 'vendor/ocr' });
+    expect(buildTranscriberConfig()).toEqual({
+      agents: new Set(['solver', 'reviewer']),
+      engine: 'local',
+      model: 'vendor/ocr',
+    });
+    vi.stubEnv('VITE_TRANSCRIBE_ENGINE', 'cloud');
+    expect(buildTranscriberConfig()?.engine).toBe('cloud');
+    vi.stubEnv('VITE_TRANSCRIBE_ENGINE', '');
     vi.stubEnv('VITE_AUTO_TRANSCRIBE', 'nonsense');
     expect(buildTranscriberConfig()).toBeNull();
   });

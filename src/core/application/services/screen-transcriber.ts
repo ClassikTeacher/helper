@@ -24,6 +24,27 @@ export interface ScreenTranscriberConfig {
   readonly model?: ModelSlug;
 }
 
+/** The pass as configured (env): which agents, and who reads the screen. */
+export interface TranscriptionConfig extends ScreenTranscriberConfig {
+  /**
+   * `local` — the on-device OCR (phase 6, free, no extra model call;
+   * `LocalScreenReader`); `cloud` — a model call (`ScreenTranscriber`).
+   */
+  readonly engine: 'local' | 'cloud';
+}
+
+/**
+ * Reads the code off screenshots as text — the "code as text" pass the agent
+ * runner calls before the answer. Two implementations: `ScreenTranscriber`
+ * (cloud model) and `LocalScreenReader` (on-device OCR).
+ */
+export interface ScreenReader {
+  /** Whether the pass is enabled for this agent. */
+  appliesTo(agentId: AgentId): boolean;
+  /** The text read from the screenshots, or '' when nothing readable was found. */
+  transcribe(shots: readonly Screenshot[], signal?: AbortSignal): Promise<string>;
+}
+
 export const TRANSCRIBE_SYSTEM_PROMPT = [
   'You transcribe source code and technical text from screenshots, verbatim.',
   'Output ONLY the transcription inside one fenced code block — no commentary.',
@@ -35,7 +56,7 @@ export const TRANSCRIBE_SYSTEM_PROMPT = [
   'If no code or task text is readable, output an empty code block.',
 ].join('\n');
 
-export class ScreenTranscriber {
+export class ScreenTranscriber implements ScreenReader {
   constructor(
     private readonly llm: LlmPort,
     private readonly config: ScreenTranscriberConfig,

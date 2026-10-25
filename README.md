@@ -32,6 +32,15 @@ pnpm tauri dev     # runs Vite + Tauri (requires Rust)
 pnpm dev           # webview only, in a browser (native ports are stubbed)
 ```
 
+## Local OCR (optional)
+
+```bash
+pnpm ocr:fetch     # once per machine: ONNX Runtime + PP-OCR models (~60 MB, verified by SHA-256)
+```
+
+Then set `VITE_AUTO_TRANSCRIBE=all` in `.env`: the code on screenshots is read
+on-device and sent to the model as text next to the images. See `.env.example`.
+
 ## Test
 
 ```bash

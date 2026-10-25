@@ -77,6 +77,15 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 - [ ] **Prompt cache:** with an Anthropic primary model, the run-info line of the 2nd+ message in a dialog shows "кэш N" (needs the prompt over the model's caching minimum, e.g. a few screenshots); the OpenRouter activity log shows the cache read
 - [ ] **History:** the SQLite `messages` of one dialog share one `conversation_id`
 
+### Phase 6 — Local OCR (2026-10)
+- [ ] `pnpm ocr:fetch` installs into `%LOCALAPPDATA%\com.aihelper.app\ocr`: `onnxruntime.dll`, `det.onnx`, `rec.onnx`, `rec_cyrillic.onnx` (if ModelScope is unreachable it says so and installs the rest; re-run is offline from `.cache`)
+- [ ] Engine check without the app: `cargo run --example ocr_check -- <screenshot.png>` (in `src-tauri`) prints `available: true, cyrillic: true` and the code with its indentation
+- [ ] With `VITE_AUTO_TRANSCRIBE=all` (engine `local` by default): a Review of code on screen shows "распознаю код…" for ~1–2 s, then the answer; only ONE request in the OpenRouter activity log (no transcription call)
+- [ ] Code with lone `}` / `)` lines and an editor gutter: the answer does not report "missing brace" bugs that aren't there
+- [ ] A Solve task whose statement is in Russian: the answer understands the statement (Cyrillic model); with `--no-cyrillic` install it still answers from the screenshot
+- [ ] Rename the OCR folder: the answer still arrives (from the screenshots) and an amber line under it says "Код не распознан… `pnpm ocr:fetch`"; restore the folder — the next request uses OCR again without restarting the app
+- [ ] `VITE_TRANSCRIBE_ENGINE=cloud` brings back the model-call transcription (two requests in the activity log)
+
 ### Phase 4 — Context
 - [ ] History persists across app restarts
 - [ ] Relevant prior context is recalled

@@ -1,6 +1,7 @@
 import { ResilientLlm } from '@/core/application/services/resilient-llm';
 import { buildModelRoutes, buildTranscriberConfig } from './model-chain';
-import { ScreenTranscriber } from '@/core/application/services/screen-transcriber';
+import { ScreenTranscriber, type ScreenReader } from '@/core/application/services/screen-transcriber';
+import { LocalScreenReader } from '@/core/application/services/local-screen-reader';
 import { AgentRunner } from '@/core/application/services/agent-runner';
 import { AnalyzeScreenshotUseCase } from '@/core/application/use-cases/analyze-screenshot.use-case';
 import { CaptureScreenshotUseCase } from '@/core/application/use-cases/capture-screenshot.use-case';
@@ -18,6 +19,7 @@ import type { SecretsPort } from '@/core/application/ports/secrets.port';
 import type { StoragePort } from '@/core/application/ports/storage.port';
 import type { ConversationRepository } from '@/core/application/ports/conversation.repository';
 import type { AudioTranscriptionPort } from '@/core/application/ports/audio-transcription.port';
+import type { OcrPort } from '@/core/application/ports/ocr.port';
 
 import { TauriScreenCaptureAdapter } from '@/infrastructure/tauri/tauri-screen-capture.adapter';
 import { TauriOverlayAdapter } from '@/infrastructure/tauri/tauri-overlay.adapter';
@@ -26,6 +28,7 @@ import { TauriLlmAdapter } from '@/infrastructure/tauri/tauri-llm.adapter';
 import { TauriSecretsAdapter } from '@/infrastructure/tauri/tauri-secrets.adapter';
 import { TauriAudioAdapter } from '@/infrastructure/tauri/tauri-audio.adapter';
 import { TauriClipboardAdapter } from '@/infrastructure/tauri/tauri-clipboard.adapter';
+import { TauriOcrAdapter } from '@/infrastructure/tauri/tauri-ocr.adapter';
 import { OpenRouterLlmAdapter } from '@/infrastructure/llm/openrouter-llm.adapter';
 import { TauriStorageAdapter } from '@/infrastructure/persistence/tauri-storage.adapter';
 import { SqliteConversationRepository } from '@/infrastructure/persistence/sqlite-conversation.repository';
@@ -34,6 +37,7 @@ import { FakeLlmAdapter } from '@/infrastructure/mocks/fake-llm.adapter';
 import { FakeScreenCaptureAdapter } from '@/infrastructure/mocks/fake-screen-capture.adapter';
 import { InMemorySecretsAdapter } from '@/infrastructure/mocks/in-memory-secrets.adapter';
 import { FakeAudioAdapter } from '@/infrastructure/mocks/fake-audio.adapter';
+import { FakeOcrAdapter } from '@/infrastructure/mocks/fake-ocr.adapter';
 import { InMemoryConversationRepository } from '@/infrastructure/mocks/in-memory-conversation.repository';
 
 import type { AppContainer, ContainerOverrides } from './container.types';
@@ -63,13 +67,17 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
   const audio: AudioTranscriptionPort =
     overrides.audio ?? (isTauri ? new TauriAudioAdapter() : new FakeAudioAdapter());
 
-  // Optional screenshot → text pass (P1 item 7), off unless VITE_AUTO_TRANSCRIBE.
+  // Optional screenshot → text pass, off unless VITE_AUTO_TRANSCRIBE: the
+  // on-device OCR (phase 6, default) or a cloud model call (P1 item 7).
   const transcriberConfig = buildTranscriberConfig();
-  const agentRunner = new AgentRunner({
-    screenCapture,
-    llm,
-    ...(transcriberConfig ? { transcriber: new ScreenTranscriber(llm, transcriberConfig) } : {}),
-  });
+  let transcriber: ScreenReader | undefined;
+  if (transcriberConfig?.engine === 'local') {
+    const ocr: OcrPort = overrides.ocr ?? (isTauri ? new TauriOcrAdapter() : new FakeOcrAdapter());
+    transcriber = new LocalScreenReader(ocr, transcriberConfig.agents);
+  } else if (transcriberConfig) {
+    transcriber = new ScreenTranscriber(llm, transcriberConfig);
+  }
+  const agentRunner = new AgentRunner({ screenCapture, llm, ...(transcriber ? { transcriber } : {}) });
 
   // Persistence (phase 4). In a Tauri window the repositories run on real SQLite
   // via tauri-plugin-sql; in a browser/tests they fall back to in-memory stores

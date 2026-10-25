@@ -39,6 +39,7 @@ export function Hud() {
   const stopped = useHudStore((s) => s.stopped);
   const dialogTurns = useHudStore((s) => s.dialogs[s.agentId]?.turns.length ?? 0);
   const phase = useHudStore((s) => s.phase);
+  const notice = useHudStore((s) => s.notice);
   const recordingStartedAt = useHudStore((s) => s.recordingStartedAt);
   const recordingWindowSecs = useHudStore((s) => s.recordingWindowSecs);
   const recordingElapsed = useElapsedSeconds(recordingStartedAt);
@@ -176,6 +177,7 @@ export function Hud() {
       <div className="mb-3 min-h-0 flex-1 overflow-y-auto">
         <MessageList answer={answer} streaming={streaming} error={error} stopped={stopped} />
         <RunInfoLine info={lastRun} />
+        {notice && <div className="mt-1 text-[10px] text-amber-400">{notice}</div>}
       </div>
       <div className="shrink-0">
         <PromptInput

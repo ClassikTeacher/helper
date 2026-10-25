@@ -13,7 +13,7 @@ import {
   type RouteProfiles,
 } from '@/core/domain/model-route';
 import { dedupeModels } from '@/core/application/services/resilient-llm';
-import type { ScreenTranscriberConfig } from '@/core/application/services/screen-transcriber';
+import type { TranscriptionConfig } from '@/core/application/services/screen-transcriber';
 import type { AgentId } from '@/core/domain/agent';
 
 /**
@@ -125,12 +125,13 @@ export function parseImageEdge(value: string | undefined): number {
 /**
  * Screen-transcription pass config (P1 item 7) from env:
  *
- *   VITE_AUTO_TRANSCRIBE   off (default) | reviewer | solver | all | comma list of agent ids
- *   VITE_TRANSCRIBE_MODEL  model for the pass (default: the light route's chain)
+ *   VITE_AUTO_TRANSCRIBE    off (default) | reviewer | solver | all | comma list of agent ids
+ *   VITE_TRANSCRIBE_ENGINE  local (default — on-device OCR, phase 6) | cloud (a model call)
+ *   VITE_TRANSCRIBE_MODEL   model for the cloud pass (default: the light route's chain)
  *
  * Returns null when the pass is off — the runner then never transcribes.
  */
-export function buildTranscriberConfig(): ScreenTranscriberConfig | null {
+export function buildTranscriberConfig(): TranscriptionConfig | null {
   const raw = import.meta.env.VITE_AUTO_TRANSCRIBE?.trim().toLowerCase();
   if (!raw || raw === 'off') return null;
   const ids: AgentId[] = raw === 'all' ? ['solver', 'reviewer'] : [];
@@ -138,6 +139,7 @@ export function buildTranscriberConfig(): ScreenTranscriberConfig | null {
     if (part === 'solver' || part === 'reviewer') ids.push(part);
   }
   if (ids.length === 0) return null;
+  const engine = import.meta.env.VITE_TRANSCRIBE_ENGINE?.trim().toLowerCase() === 'cloud' ? 'cloud' : 'local';
   const model = import.meta.env.VITE_TRANSCRIBE_MODEL?.trim();
-  return { agents: new Set(ids), ...(model ? { model } : {}) };
+  return { agents: new Set(ids), engine, ...(model ? { model } : {}) };
 }
