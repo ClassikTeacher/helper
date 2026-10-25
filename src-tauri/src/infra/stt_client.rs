@@ -70,15 +70,41 @@ fn form_fields(language: Option<&str>, prompt: Option<&str>) -> Vec<(&'static st
     fields
 }
 
-/// Per-attempt timeout. Whisper-turbo transcribes a ≤60 s clip in a couple of
-/// seconds, so a request still outstanding after this long is almost certainly
-/// stuck (slow/hung connection) — response latency matters more than saving the
-/// in-flight call, so we abort it (drop the future) and fire a fresh one.
-/// Overridable via `AI_HELPER_STT_TIMEOUT_MS`.
+/// BASE per-attempt timeout — the server-side part. Whisper-turbo transcribes a
+/// ≤60 s clip in a couple of seconds, so a request still outstanding this long
+/// after its upload is almost certainly stuck (slow/hung connection) —
+/// response latency matters more than saving the in-flight call, so we abort
+/// it (drop the future) and fire a fresh one. The upload time itself is added
+/// on top per request size (see `stt_timeout_for`). Overridable via
+/// `AI_HELPER_STT_TIMEOUT_MS`.
 const DEFAULT_STT_TIMEOUT_MS: u64 = 8_000;
 
 /// Environment variable overriding [`DEFAULT_STT_TIMEOUT_MS`] (milliseconds).
 const STT_TIMEOUT_ENV: &str = "AI_HELPER_STT_TIMEOUT_MS";
+
+/// Assumed worst-case uplink, in kilobytes per second, used to size the upload
+/// part of the per-attempt timeout (`AI_HELPER_STT_UPLOAD_KBPS`). 125 KB/s is
+/// ≈ 1 Mbit/s — a poor connection, not a typical one — so a legitimate upload
+/// of a long clip is not mistaken for a hang (2026-10 review §3.3).
+const DEFAULT_STT_UPLOAD_KBPS: u64 = 125;
+const STT_UPLOAD_KBPS_ENV: &str = "AI_HELPER_STT_UPLOAD_KBPS";
+
+/// Parse the uplink override, falling back on absent/blank/invalid/zero. Pure.
+fn resolve_upload_kbps(raw: Option<&str>) -> u64 {
+    raw.and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(DEFAULT_STT_UPLOAD_KBPS)
+}
+
+/// Per-attempt timeout for a `wav_len`-byte upload: the base (server work)
+/// plus the time the upload itself takes on the assumed uplink. A FIXED 8 s
+/// budget killed legitimate uploads of long clips (60 s ≈ 1.9 MB) on slow
+/// connections while the server was fine — and then retried the same doomed
+/// request twice more. Pure — unit-tested.
+fn stt_timeout_for(base: Duration, wav_len: usize, upload_kbps: u64) -> Duration {
+    let bytes_per_sec = upload_kbps.max(1) * 1000;
+    base + Duration::from_secs((wav_len as u64).div_ceil(bytes_per_sec))
+}
 
 /// Total attempts before giving up (the first try plus retries). Transcription
 /// is idempotent (no side effects), so retrying is safe.
@@ -192,20 +218,26 @@ impl SttClient {
     /// (network, HTTP status, malformed body) — the caller turns that into a
     /// command rejection surfaced in the HUD.
     ///
-    /// Each attempt has a timeout ([`stt_timeout`]); if it fires — or the attempt
-    /// hits a transient error — the in-flight request is dropped (aborted) and a
-    /// fresh one is sent, up to [`STT_MAX_ATTEMPTS`]. A permanent error (auth,
-    /// bad request, malformed body) stops immediately. `wav` is cloned per
-    /// attempt (~≤2 MB at the 60 s cap), which is cheap relative to the upload.
+    /// Each attempt has a timeout ([`stt_timeout_for`]: base + upload time for
+    /// this clip's size); if it fires — or the attempt hits a transient error —
+    /// the in-flight request is dropped (aborted) and a fresh one is sent, up to
+    /// [`STT_MAX_ATTEMPTS`]. A permanent error (auth, bad request, malformed
+    /// body) stops immediately. `wav` is cloned per attempt (~≤2 MB at the 60 s
+    /// cap), which is cheap relative to the upload.
     pub async fn transcribe(&self, api_key: &str, wav: Vec<u8>) -> Result<String, String> {
         let language = resolve_language(std::env::var(STT_LANGUAGE_ENV).ok().as_deref());
         let mut prompt = resolve_prompt(std::env::var(STT_PROMPT_ENV).ok().as_deref());
+        let timeout = stt_timeout_for(
+            stt_timeout(),
+            wav.len(),
+            resolve_upload_kbps(std::env::var(STT_UPLOAD_KBPS_ENV).ok().as_deref()),
+        );
         let mut last_err = String::from("STT made no attempts");
         let mut attempts = 0;
         while attempts < STT_MAX_ATTEMPTS {
             attempts += 1;
             let fields = form_fields(language.as_deref(), prompt.as_deref());
-            match self.transcribe_once(api_key, wav.clone(), fields).await {
+            match self.transcribe_once(api_key, wav.clone(), fields, timeout).await {
                 Outcome::Done(text) if is_hallucination(&text) => {
                     // Not speech — report "nothing said" rather than feed the
                     // prompt a phrase the model will treat as the question.
@@ -237,6 +269,7 @@ impl SttClient {
         api_key: &str,
         wav: Vec<u8>,
         fields: Vec<(&'static str, String)>,
+        timeout: Duration,
     ) -> Outcome {
         let file_part = match reqwest::multipart::Part::bytes(wav)
             .file_name("audio.wav")
@@ -257,7 +290,7 @@ impl SttClient {
             .post(OPENROUTER_TRANSCRIPTIONS_URL)
             .bearer_auth(api_key)
             .multipart(form)
-            .timeout(stt_timeout())
+            .timeout(timeout)
             .send()
             .await
         {
@@ -349,6 +382,30 @@ mod tests {
         assert_eq!(resolve_timeout_ms(Some("")), DEFAULT_STT_TIMEOUT_MS);
         assert_eq!(resolve_timeout_ms(Some("soon")), DEFAULT_STT_TIMEOUT_MS);
         assert_eq!(resolve_timeout_ms(Some("0")), DEFAULT_STT_TIMEOUT_MS);
+    }
+
+    #[test]
+    fn stt_timeout_grows_with_the_upload_size_on_the_assumed_uplink() {
+        let base = Duration::from_millis(DEFAULT_STT_TIMEOUT_MS);
+        // Nothing to upload: the base alone.
+        assert_eq!(stt_timeout_for(base, 0, DEFAULT_STT_UPLOAD_KBPS), base);
+        // A 60 s clip (16 kHz mono PCM16 ≈ 1.9 MB) at 125 KB/s: +16 s (15.2 rounded up).
+        assert_eq!(
+            stt_timeout_for(base, 1_920_044, DEFAULT_STT_UPLOAD_KBPS),
+            base + Duration::from_secs(16)
+        );
+        // A faster uplink shrinks the budget; zero is guarded against.
+        assert_eq!(stt_timeout_for(base, 1_000_000, 1000), base + Duration::from_secs(1));
+        assert_eq!(stt_timeout_for(base, 1_000, 0), base + Duration::from_secs(1));
+    }
+
+    #[test]
+    fn upload_kbps_override_falls_back_on_garbage() {
+        assert_eq!(resolve_upload_kbps(None), DEFAULT_STT_UPLOAD_KBPS);
+        assert_eq!(resolve_upload_kbps(Some("")), DEFAULT_STT_UPLOAD_KBPS);
+        assert_eq!(resolve_upload_kbps(Some("fast")), DEFAULT_STT_UPLOAD_KBPS);
+        assert_eq!(resolve_upload_kbps(Some("0")), DEFAULT_STT_UPLOAD_KBPS);
+        assert_eq!(resolve_upload_kbps(Some(" 500 ")), 500);
     }
 
     #[test]
