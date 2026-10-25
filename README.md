@@ -20,6 +20,25 @@ request logging in your OpenRouter account settings; that part is not under the
 app's control. The STT upload (`/audio/transcriptions`) carries no provider
 preference — unverified whether the endpoint accepts one.
 
+## Native runtime overrides (`AI_HELPER_*`)
+
+Read by the Rust core at runtime (process environment) — unlike `VITE_*`, which
+are compiled into the webview. All optional.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AI_HELPER_MAX_RECORDING_SECS` | `60` | Rolling window of loopback recording — the LAST N seconds are kept |
+| `AI_HELPER_STT_LANGUAGE` | `ru` | Whisper language hint; `auto` sends none |
+| `AI_HELPER_STT_PROMPT` | built-in vocabulary | Whisper `prompt` (domain terms); `off` sends none |
+| `AI_HELPER_STT_SILENCE_DBFS` | `-50` | Silence gate: frames below this are silence; a silent clip is not uploaded; `off` disables the gate |
+| `AI_HELPER_STT_TIMEOUT_MS` | `8000` | Base per-attempt STT timeout (server work); upload time is added per clip size |
+| `AI_HELPER_STT_UPLOAD_KBPS` | `125` | Assumed worst-case uplink (KB/s) used to size the upload part of the STT timeout |
+| `AI_HELPER_LLM_CONNECT_TIMEOUT_MS` | `10000` | TCP/TLS connect timeout for OpenRouter |
+| `AI_HELPER_LLM_FIRST_BYTE_TIMEOUT_MS` | `30000` | Budget until the first byte of the response body; a miss is a retryable error → failover |
+| `AI_HELPER_LLM_IDLE_TIMEOUT_MS` | `60000` | Longest silence between body chunks while streaming (keep-alive comments count) |
+| `AI_HELPER_DATA_COLLECTION` | `deny` | OpenRouter `provider.data_collection`; `allow` = default routing |
+| `AI_HELPER_ZDR` | unset | `true` routes only to zero-data-retention endpoints |
+
 ## Security model (what secure-native does and does not cover)
 
 - The OpenRouter key lives in the OS keychain and is read only by native code at
