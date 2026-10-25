@@ -118,11 +118,21 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
  * Outside Tauri (`pnpm dev` in a plain browser, or tests), we fall back to the
  * DEV-ONLY OpenRouter webview adapter when a throwaway `VITE_OPENROUTER_API_KEY`
  * is explicitly provided (it exposes the key in the renderer). Otherwise: fakes.
+ *
+ * The dev branch is gated on `import.meta.env.DEV`, not only on the Tauri
+ * check: Vite inlines `VITE_*` values as string literals at build time, so an
+ * ungated reference would bake whatever key sits in `.env` on the build
+ * machine into the shipped bundle — even though the Tauri path never reads it
+ * (2026-10 review §2.2). With the gate the whole branch is dead code in a
+ * production build and is dropped; `vite.config.ts` additionally defines the
+ * variable away on `vite build`. Exported for that regression test only.
  */
-function selectLlm(isTauri: boolean): LlmPort {
+export function selectLlm(isTauri: boolean): LlmPort {
   if (isTauri) return new TauriLlmAdapter();
-  const devKey = import.meta.env.VITE_OPENROUTER_API_KEY;
-  if (devKey) return new OpenRouterLlmAdapter(devKey);
+  if (import.meta.env.DEV) {
+    const devKey = import.meta.env.VITE_OPENROUTER_API_KEY;
+    if (devKey) return new OpenRouterLlmAdapter(devKey);
+  }
   return new FakeLlmAdapter();
 }
 

@@ -22,8 +22,13 @@ Tauri v2 (Rust core) · React + Vite + TypeScript · Tailwind · Zustand · Verc
 
 ```bash
 pnpm install
-cp .env.example .env   # optional, dev convenience
+cp .env.example .env   # optional: models/hotkeys tuning (no secrets here)
 ```
+
+The OpenRouter API key is entered once in the app (⚙ in the HUD) and stored in
+the OS keychain — never in `.env`. For `pnpm dev` convenience a throwaway key may
+go into `.env.development.local` (git-ignored, loaded by dev mode only; production
+builds define the variable away — see `vite.config.ts`).
 
 ## Develop
 
