@@ -8,6 +8,9 @@ pub mod infra;
 pub mod ports;
 pub mod services;
 
+#[cfg(test)]
+mod contract_fixtures;
+
 use tauri::{Manager, Url, WebviewWindowBuilder};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 
