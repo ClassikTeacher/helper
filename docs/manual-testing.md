@@ -104,6 +104,13 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 - [ ] Rename the OCR folder: the answer still arrives (from the screenshots) and an amber line under it says "Код не распознан… `pnpm ocr:fetch`"; restore the folder — the next request uses OCR again without restarting the app
 - [ ] `VITE_TRANSCRIBE_ENGINE=cloud` brings back the model-call transcription (two requests in the activity log)
 
+### Active-window capture (F5, 2026-10)
+- [ ] With the IDE focused, press `Ctrl+Alt+W` (override `VITE_CAPTURE_WINDOW_ACCELERATOR`): the HUD shows and the strip gets a thumbnail marked "окно" containing only the IDE window (no second monitor, taskbar or chat); SEND answers from it as usual
+- [ ] On a 2-monitor setup the shot is the window even when the cursor is on the other monitor
+- [ ] Click into the HUD so it is the foreground window, press `Ctrl+Alt+W`: the strip gets a monitor shot (no "окно" badge) and the amber note "Активное окно недоступно для захвата — снят монитор под курсором." appears
+- [ ] Minimize the IDE (focus lands elsewhere) and press `Ctrl+Alt+W` on an empty desktop: a monitor shot + the same note; no error banner
+- [ ] The native log shows `capture_screen: Window WxH (… KB png) from … in … ms` for a window shot and `no capturable foreground window` / `active window capture failed` lines for the fallbacks
+
 ### Tray (F1, 2026-10)
 > The app is resident: the HUD starts hidden and the process lives in the system tray.
 

@@ -23,6 +23,16 @@ export interface CaptureRegionDto {
   readonly height: number;
 }
 
+/**
+ * What to capture when no explicit display is given (F5): the monitor under
+ * the cursor (default) or the active window, which falls back to the monitor
+ * when it cannot be captured. Mirror of `CaptureTarget` in dto.rs.
+ */
+export type CaptureTargetDto = 'cursor-monitor' | 'active-window';
+
+/** What a capture actually came from. Mirror of `CaptureSource` in dto.rs. */
+export type CaptureSourceDto = 'monitor' | 'window';
+
 export interface CaptureRequestDto {
   /** Optional sub-region; omit for full screen. */
   readonly region?: CaptureRegionDto;
@@ -33,6 +43,8 @@ export interface CaptureRequestDto {
    * native captures the monitor under the mouse cursor (P0).
    */
   readonly displayName?: string;
+  /** Monitor under the cursor (default) or the active window (F5). */
+  readonly target?: CaptureTargetDto;
 }
 
 export interface CaptureResultDto {
@@ -42,6 +54,8 @@ export interface CaptureResultDto {
   readonly height: number;
   /** Unix epoch milliseconds, UTC. */
   readonly capturedAt: number;
+  /** A whole monitor, or one window; an active-window request that fell back reports `monitor`. */
+  readonly source: CaptureSourceDto;
 }
 
 export interface OcrRequestDto {

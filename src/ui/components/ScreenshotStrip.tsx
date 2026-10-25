@@ -40,6 +40,14 @@ export function ScreenshotStrip({ screenshots, max, onRemove, onClear }: Screens
               alt={`Скриншот ${index + 1}: ${shot.width}×${shot.height}`}
               className="block h-16 w-24 bg-neutral-950 object-cover"
             />
+            {shot.source === 'window' && (
+              <span
+                className="absolute bottom-0.5 left-0.5 rounded bg-neutral-900/80 px-1 text-[9px] text-neutral-300"
+                title="Снимок активного окна"
+              >
+                окно
+              </span>
+            )}
             <button
               type="button"
               onClick={() => onRemove(index)}

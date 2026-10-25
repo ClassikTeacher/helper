@@ -28,13 +28,15 @@ export const captureRequest: CaptureRequestDto = {
     "width": 300,
     "x": 10,
     "y": 20
-  }
+  },
+  "target": "active-window"
 };
 
 export const captureResult: CaptureResultDto = {
   "capturedAt": 1700000000000,
   "height": 882,
   "imageBase64": "QUJD",
+  "source": "window",
   "width": 1568
 };
 

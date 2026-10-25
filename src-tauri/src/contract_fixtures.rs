@@ -64,6 +64,7 @@ fn samples() -> Vec<Sample> {
                 region: Some(region.clone()),
                 display_index: Some(1),
                 display_name: Some(r"\\.\DISPLAY2".to_string()),
+                target: Some(CaptureTarget::ActiveWindow),
             },
         ),
         sample(
@@ -74,6 +75,7 @@ fn samples() -> Vec<Sample> {
                 width: 1568,
                 height: 882,
                 captured_at: 1_700_000_000_000,
+                source: CaptureSource::Window,
             },
         ),
         sample(

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Coordinates are PHYSICAL device pixels (matching the captured frame), not
 /// logical/CSS pixels — see the DPI caveat in `infra/scap_capturer.rs`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureRegion {
     pub x: u32,
@@ -26,6 +26,27 @@ pub struct CaptureRequest {
     /// monitor under the mouse cursor — the screen the user is working on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// What to capture when no explicit display is given (F5): the monitor
+    /// under the cursor (default) or the active window, which falls back to
+    /// the monitor when it cannot be captured — see `CaptureResult.source`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<CaptureTarget>,
+}
+
+/// Mirror of `CaptureTargetDto` in dto.ts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CaptureTarget {
+    CursorMonitor,
+    ActiveWindow,
+}
+
+/// What a capture actually came from. Mirror of `CaptureSourceDto` in dto.ts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CaptureSource {
+    Monitor,
+    Window,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +57,9 @@ pub struct CaptureResult {
     pub height: u32,
     /// Unix epoch milliseconds, UTC.
     pub captured_at: i64,
+    /// A whole monitor, or one window (F5). An active-window request that
+    /// fell back to the monitor reports `monitor`.
+    pub source: CaptureSource,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

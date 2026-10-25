@@ -1,13 +1,14 @@
 import { useHudStore, MAX_SCREENSHOTS } from '@/ui/store/hud.store';
 import { sendBatch } from './send-batch';
 import { toggleRecording } from './toggle-recording';
+import type { CaptureTarget } from '@/core/application/ports/screen-capture.port';
 import type { AppContainer } from './container.types';
 
 /** The bootstrap slice the hotkey wiring needs: the capture use-case + overlay. */
 type HotkeysContainer = Pick<AppContainer, 'platform' | 'useCases'>;
 
 /**
- * Five distinct global hotkeys. Overridable via `VITE_*` env vars
+ * Six distinct global hotkeys. Overridable via `VITE_*` env vars
  * (see `.env.example`) for easy tuning during early development; not exposed
  * as an in-app setting yet — see tasks.md backlog "Настраиваемый хоткей".
  */
@@ -25,6 +26,14 @@ export const TOGGLE_HUD_ACCELERATOR =
  */
 export const CAPTURE_ACCELERATOR =
   import.meta.env.VITE_CAPTURE_ACCELERATOR || 'CommandOrControl+Alt+S';
+/**
+ * Capture the ACTIVE WINDOW into the batch (F5): the IDE alone — no second
+ * monitor, panels or chat, so code is larger at the same `maxImageEdge`.
+ * Falls back to the monitor under the cursor when there is no capturable
+ * window (the HUD shows a note). Override via `VITE_CAPTURE_WINDOW_ACCELERATOR`.
+ */
+export const CAPTURE_WINDOW_ACCELERATOR =
+  import.meta.env.VITE_CAPTURE_WINDOW_ACCELERATOR || 'CommandOrControl+Alt+W';
 /**
  * Send the staged screenshot batch (+ the current agent/language/instructions)
  * for analysis and stream the answer (phase 8). Override via
@@ -77,7 +86,10 @@ async function toggleHud(container: HotkeysContainer): Promise<void> {
  * swallowed. There is no tray/notification channel yet, so the HUD banner is
  * the only feedback path.
  */
-async function captureToBuffer(container: HotkeysContainer): Promise<void> {
+async function captureToBuffer(
+  container: HotkeysContainer,
+  target: CaptureTarget = 'cursor-monitor',
+): Promise<void> {
   const { overlay } = container.platform;
 
   if (useHudStore.getState().screenshots.length >= MAX_SCREENSHOTS) {
@@ -86,13 +98,21 @@ async function captureToBuffer(container: HotkeysContainer): Promise<void> {
   }
 
   try {
-    const screenshot = await container.useCases.captureScreenshot.execute();
+    const screenshot = await container.useCases.captureScreenshot.execute({ target });
     useHudStore.getState().addScreenshot(screenshot);
+    // Native could not capture the window (none, minimized, the HUD itself)
+    // and took the monitor instead: the shot is staged, but say so.
+    if (target === 'active-window' && screenshot.source !== 'window') {
+      useHudStore.getState().setNotice(WINDOW_FALLBACK_NOTICE);
+    }
   } catch (err) {
     useHudStore.getState().fail(err instanceof Error ? err.message : String(err));
   }
   await overlay.show();
 }
+
+export const WINDOW_FALLBACK_NOTICE =
+  'Активное окно недоступно для захвата — снят монитор под курсором.';
 
 /**
  * Read the clipboard into the staged code text (R15) and show the HUD. An
@@ -128,7 +148,7 @@ async function toggleRecordingHotkey(container: HotkeysContainer): Promise<void>
  * and `OverlayPort` (architecture.md §8: platform ports are wired by bootstrap,
  * never by UI components).
  *
- * The five hotkeys are registered independently (`allSettled`) so a conflict
+ * The six hotkeys are registered independently (`allSettled`) so a conflict
  * on one accelerator (e.g. already taken by another app) does not prevent the
  * others from registering. If any registration fails, the aggregated error is
  * rethrown so the caller can surface it (`ServicesProvider` shows the HUD with
@@ -143,6 +163,9 @@ export async function registerHotkeys(container: HotkeysContainer): Promise<void
     }),
     hotkey.register(CAPTURE_ACCELERATOR, () => {
       void captureToBuffer(container);
+    }),
+    hotkey.register(CAPTURE_WINDOW_ACCELERATOR, () => {
+      void captureToBuffer(container, 'active-window');
     }),
     hotkey.register(SEND_ACCELERATOR, () => {
       void sendBatch(container);
@@ -171,6 +194,7 @@ export async function unregisterHotkeys(
   await Promise.allSettled([
     hotkey.unregister(TOGGLE_HUD_ACCELERATOR),
     hotkey.unregister(CAPTURE_ACCELERATOR),
+    hotkey.unregister(CAPTURE_WINDOW_ACCELERATOR),
     hotkey.unregister(SEND_ACCELERATOR),
     hotkey.unregister(RECORD_ACCELERATOR),
     hotkey.unregister(PASTE_CODE_ACCELERATOR),

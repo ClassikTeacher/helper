@@ -13,6 +13,7 @@ export class TauriScreenCaptureAdapter implements ScreenCapturePort {
     const request: CaptureRequestDto = {
       ...(options?.region ? { region: options.region } : {}),
       ...(options?.displayIndex !== undefined ? { displayIndex: options.displayIndex } : {}),
+      ...(options?.target ? { target: options.target } : {}),
     };
     const res = await invoke<CaptureResultDto>(IPC_COMMANDS.captureScreen, { request });
     return {
@@ -20,6 +21,7 @@ export class TauriScreenCaptureAdapter implements ScreenCapturePort {
       width: res.width,
       height: res.height,
       capturedAt: res.capturedAt,
+      source: res.source,
     };
   }
 }
