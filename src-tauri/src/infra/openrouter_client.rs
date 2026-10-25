@@ -15,14 +15,88 @@ use crate::dto::{LlmChunk, LlmContentPart, LlmMessage, LlmRole, LlmStreamRequest
 
 const OPENROUTER_CHAT_COMPLETIONS_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
+/// `provider.data_collection` override: `deny` (default) or `allow`.
+const DATA_COLLECTION_ENV: &str = "AI_HELPER_DATA_COLLECTION";
+/// `provider.zdr` override: `true`/`1`/`on` routes only to zero-data-retention endpoints.
+const ZDR_ENV: &str = "AI_HELPER_ZDR";
+
+/// OpenRouter provider preferences sent with every chat request (2026-10
+/// review §2.3). OpenRouter is a router: a request to a model slug lands on
+/// one of several upstream endpoints with different logging/training
+/// policies. What this app sends — screenshots of screens that are often not
+/// the user's own, and the interlocutor's voice as a transcript — must not end
+/// up with a provider that retains or trains on it, so by default routing is
+/// restricted to providers whose published policy is "no data collection".
+/// `zdr` narrows further to zero-data-retention endpoints (fewer providers;
+/// off by default). Not sent on the STT upload: that endpoint's support for
+/// provider preferences is unverified and an unknown multipart field could
+/// reject the whole request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderPolicy {
+    /// `true` → `"data_collection": "deny"`; `false` → OpenRouter's default routing.
+    pub deny_data_collection: bool,
+    /// `true` → `"zdr": true`.
+    pub zdr: bool,
+}
+
+impl Default for ProviderPolicy {
+    fn default() -> Self {
+        Self {
+            deny_data_collection: true,
+            zdr: false,
+        }
+    }
+}
+
+impl ProviderPolicy {
+    /// The policy from the process environment (see the `*_ENV` constants).
+    pub fn from_env() -> Self {
+        resolve_provider_policy(
+            std::env::var(DATA_COLLECTION_ENV).ok().as_deref(),
+            std::env::var(ZDR_ENV).ok().as_deref(),
+        )
+    }
+}
+
+/// Parses the env overrides. `data_collection`: `allow` turns the restriction
+/// off, anything else (unset, blank, `deny`, a typo) keeps the safe default.
+/// `zdr`: `true`/`1`/`on`/`yes` enables it. Pure — unit-tested.
+fn resolve_provider_policy(data_collection: Option<&str>, zdr: Option<&str>) -> ProviderPolicy {
+    let allow = data_collection
+        .map(str::trim)
+        .is_some_and(|v| v.eq_ignore_ascii_case("allow"));
+    let zdr = zdr
+        .map(|v| v.trim().to_ascii_lowercase())
+        .is_some_and(|v| matches!(v.as_str(), "true" | "1" | "on" | "yes"));
+    ProviderPolicy {
+        deny_data_collection: !allow,
+        zdr,
+    }
+}
+
+/// The `provider` object for the request body, or `None` when the policy is
+/// OpenRouter's default (nothing to send).
+fn provider_preferences(policy: &ProviderPolicy) -> Option<Value> {
+    let mut provider = serde_json::Map::new();
+    if policy.deny_data_collection {
+        provider.insert("data_collection".to_string(), json!("deny"));
+    }
+    if policy.zdr {
+        provider.insert("zdr".to_string(), json!(true));
+    }
+    (!provider.is_empty()).then_some(Value::Object(provider))
+}
+
 pub struct OpenRouterClient {
     http: reqwest::Client,
+    policy: ProviderPolicy,
 }
 
 impl OpenRouterClient {
     pub fn new() -> Self {
         Self {
             http: reqwest::Client::new(),
+            policy: ProviderPolicy::from_env(),
         }
     }
 
@@ -38,7 +112,7 @@ impl OpenRouterClient {
         request: &LlmStreamRequest,
         channel: &Channel<LlmChunk>,
     ) {
-        let body = build_request_body(request);
+        let body = build_request_body(request, &self.policy);
 
         let response = match self
             .http
@@ -141,7 +215,10 @@ fn send_error(channel: &Channel<LlmChunk>, message: String, retryable: bool) {
 /// `max_tokens` is deliberately NEVER sent (user decision 2026-07-22): a cap
 /// would silently truncate answers; completeness wins. A provider-side length
 /// stop is still reported via `finish_reason: "length"` and shown in the HUD.
-fn build_request_body(request: &LlmStreamRequest) -> Value {
+///
+/// `provider` carries the data policy (see `ProviderPolicy`) — omitted only
+/// when the policy is OpenRouter's default.
+fn build_request_body(request: &LlmStreamRequest, policy: &ProviderPolicy) -> Value {
     let mut body = json!({
         "model": request.model,
         "stream": true,
@@ -157,6 +234,9 @@ fn build_request_body(request: &LlmStreamRequest) -> Value {
     }
     if let Some(effort) = &request.reasoning_effort {
         body["reasoning"] = json!({ "effort": effort, "exclude": true });
+    }
+    if let Some(provider) = provider_preferences(policy) {
+        body["provider"] = provider;
     }
     body
 }
@@ -733,7 +813,7 @@ mod tests {
             request_id: None,
         };
 
-        let body = build_request_body(&request);
+        let body = build_request_body(&request, &ProviderPolicy::default());
         assert_eq!(body["model"], "openai/gpt-4o-mini");
         assert_eq!(body["stream"], true);
         assert_eq!(body["usage"]["include"], true);
@@ -780,7 +860,7 @@ mod tests {
             request_id: None,
         };
 
-        let body = build_request_body(&request);
+        let body = build_request_body(&request, &ProviderPolicy::default());
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(
             body["messages"][0]["content"],
@@ -808,7 +888,7 @@ mod tests {
 
     #[test]
     fn build_request_body_omits_unset_parameters_and_never_sends_max_tokens() {
-        let body = build_request_body(&text_request());
+        let body = build_request_body(&text_request(), &ProviderPolicy::default());
         assert!(body.get("temperature").is_none());
         assert!(body.get("reasoning").is_none());
         // Completeness over caps (user decision 2026-07-22).
@@ -816,11 +896,46 @@ mod tests {
     }
 
     #[test]
+    fn build_request_body_denies_provider_data_collection_by_default() {
+        // 2026-10 review §2.3: other people's screens and voice must not be
+        // routed to a provider that stores or trains on prompts.
+        let body = build_request_body(&text_request(), &ProviderPolicy::default());
+        assert_eq!(body["provider"]["data_collection"], "deny");
+        assert!(body["provider"].get("zdr").is_none());
+    }
+
+    #[test]
+    fn build_request_body_omits_provider_preferences_when_allowed_and_sends_zdr_when_asked() {
+        let allow = ProviderPolicy { deny_data_collection: false, zdr: false };
+        assert!(build_request_body(&text_request(), &allow).get("provider").is_none());
+
+        let strict = ProviderPolicy { deny_data_collection: true, zdr: true };
+        let body = build_request_body(&text_request(), &strict);
+        assert_eq!(body["provider"]["data_collection"], "deny");
+        assert_eq!(body["provider"]["zdr"], true);
+    }
+
+    #[test]
+    fn provider_policy_env_defaults_to_deny_and_only_an_explicit_allow_relaxes_it() {
+        assert_eq!(resolve_provider_policy(None, None), ProviderPolicy::default());
+        assert_eq!(resolve_provider_policy(Some(""), Some("")), ProviderPolicy::default());
+        assert_eq!(resolve_provider_policy(Some("deny"), None), ProviderPolicy::default());
+        assert_eq!(resolve_provider_policy(Some("alow"), None), ProviderPolicy::default());
+        assert_eq!(
+            resolve_provider_policy(Some(" Allow "), Some("true")),
+            ProviderPolicy { deny_data_collection: false, zdr: true }
+        );
+        assert!(resolve_provider_policy(None, Some("1")).zdr);
+        assert!(resolve_provider_policy(None, Some("ON")).zdr);
+        assert!(!resolve_provider_policy(None, Some("false")).zdr);
+    }
+
+    #[test]
     fn build_request_body_sends_temperature_and_excluded_reasoning_when_set() {
         let mut request = text_request();
         request.temperature = Some(0.3);
         request.reasoning_effort = Some("medium".to_string());
-        let body = build_request_body(&request);
+        let body = build_request_body(&request, &ProviderPolicy::default());
         assert_eq!(body["temperature"], 0.3);
         assert_eq!(body["reasoning"]["effort"], "medium");
         // The thinking is not streamed back to the HUD.
@@ -850,7 +965,8 @@ mod tests {
 
     #[test]
     fn build_request_body_marks_the_cache_breakpoint_for_anthropic_models() {
-        let body = build_request_body(&dialog_request("anthropic/claude-haiku-4.5"));
+        let body =
+            build_request_body(&dialog_request("anthropic/claude-haiku-4.5"), &ProviderPolicy::default());
         let last = &body["messages"][3]["content"];
         // On the last text part; the image before it is still in the cached prefix.
         assert_eq!(last[1]["cache_control"]["type"], "ephemeral");
@@ -863,7 +979,7 @@ mod tests {
     #[test]
     fn build_request_body_sends_no_cache_marker_to_other_providers() {
         for model in ["google/gemini-3.1-flash-lite", "openai/gpt-4o-mini"] {
-            let body = build_request_body(&dialog_request(model));
+            let body = build_request_body(&dialog_request(model), &ProviderPolicy::default());
             let serialized = body.to_string();
             assert!(!serialized.contains("cache_control"), "{model}: {serialized}");
         }
