@@ -39,6 +39,24 @@ are compiled into the webview. All optional.
 | `AI_HELPER_DATA_COLLECTION` | `deny` | OpenRouter `provider.data_collection`; `allow` = default routing |
 | `AI_HELPER_ZDR` | unset | `true` routes only to zero-data-retention endpoints |
 
+## Diagnostics and logs
+
+Native writes a rotating log file via `tauri-plugin-log` (~1 MB, one backup kept;
+also stdout in `pnpm tauri dev`):
+
+| OS | Path |
+|---|---|
+| Windows | `%LOCALAPPDATA%\com.aihelper.app\logs\ai-helper.log` |
+| Linux | `~/.local/share/com.aihelper.app/logs/ai-helper.log` |
+
+**Logging policy** (`src-tauri/src/lib.rs`): the log records *what happened* — command
+names, sizes, durations, model slugs, finish reasons, token/cost accounting, error
+messages — and never the API key, prompt text, screenshots, code or transcripts (only
+their lengths). Webview `console.error`/`console.warn`, uncaught errors and unhandled
+rejections are mirrored into the same file. For a bug report use **⚙ → Copy diagnostics**:
+it copies the app version, platform, log path and the last log lines (`diagnostics_snapshot`
+command), which is safe to paste as-is.
+
 ## Security model (what secure-native does and does not cover)
 
 - The OpenRouter key lives in the OS keychain and is read only by native code at
@@ -89,10 +107,33 @@ pnpm dev           # webview only, in a browser (native ports are stubbed)
 ## Test
 
 ```bash
-pnpm test              # Vitest unit + integration
+pnpm test              # Vitest unit + integration + contract
 pnpm test:coverage     # with coverage
-pnpm typecheck         # tsc --noEmit
+pnpm typecheck         # tsc --noEmit (also validates the generated contract fixtures)
+pnpm lint              # eslint (incl. the ui → infrastructure/@tauri-apps import ban)
+cargo test --lib --manifest-path src-tauri/Cargo.toml   # Rust unit tests (Windows target)
+pnpm models:check      # model slugs vs OpenRouter — needs network to openrouter.ai
 ```
+
+**CI** (`.github/workflows/ci.yml`) runs typecheck + lint + Vitest on Linux and the Rust
+lib tests on `windows-latest` for every pull request to `main` (and on demand).
+
+**Contract drift guard.** `tests/contract/dto-fixtures.generated.ts` is produced by a
+Rust test from the serde DTOs and typechecked against `src/core/contracts/dto.ts`;
+`tests/contract/ipc-commands.test.ts` compares `IPC_COMMANDS` with `generate_handler!`.
+After changing `src-tauri/src/dto.rs`, regenerate in the same commit:
+
+```bash
+UPDATE_CONTRACT_FIXTURES=1 cargo test --lib --manifest-path src-tauri/Cargo.toml contract_fixtures
+```
+
+**Rust tests outside Windows:** `cargo test --target x86_64-pc-windows-gnu --lib` under
+wine with two stub DLLs (`WebView2Loader.dll`, `coremessaging.dll`) — see architecture.md §10.
+
+**Model catalog.** The slugs in `src/core/domain/model-route.ts` are placeholders and the
+catalog is stale (the current generation is Claude 5.5); run `pnpm models:check` on a
+machine with access to openrouter.ai and update `AVAILABLE_MODELS` / `.env` accordingly
+(the agent's dev environment cannot reach it).
 
 ## Layout
 
@@ -104,8 +145,9 @@ src/
   infrastructure   # adapters (tauri / llm / mocks)
   ui               # React (render only)
   bootstrap        # DI composition root
-src-tauri/         # Rust core (commands / ports / services / infra)
-tests/             # Vitest
+src-tauri/         # Rust core (commands / ports / services / infra; contract_fixtures.rs = test-only)
+tests/             # Vitest: unit/ integration/ contract/ (generated DTO fixtures + IPC command test)
+.github/workflows/ # CI: webview checks on Linux, Rust lib tests on Windows (pull requests)
 ```
 
 The webview never imports `infrastructure/*` or `@tauri-apps/*` directly — it talks

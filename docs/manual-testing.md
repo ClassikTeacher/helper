@@ -47,7 +47,7 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 
 ### Security — links in answers (2026-10)
 - [ ] Ask something whose answer contains a link (e.g. "дай ссылку на документацию Go по context"): the link renders as text with its URL in grey, is not clickable, and the HUD stays on its page
-- [ ] Defense in depth: in devtools run `location.href = 'https://example.com'` — the HUD does NOT navigate; the terminal running `pnpm tauri dev` logs `[overlay] blocked navigation to https://example.com/`
+- [ ] Defense in depth: in devtools run `location.href = 'https://example.com'` — the HUD does NOT navigate; the terminal running `pnpm tauri dev` (and the native log file — see Diagnostics below) logs `overlay: blocked navigation to https://example.com/`
 - [ ] The window still behaves as before (starts hidden, hotkeys show it, transparent/always-on-top, drag by header, content-protected) — it is now created in `setup()` from the same `tauri.conf.json` entry (`create: false`)
 
 ### Privacy — provider data policy (2026-10)
@@ -55,7 +55,11 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 - [ ] With `AI_HELPER_ZDR=true` at least the primary model answers (ZDR endpoints are fewer)
 
 ### Phase 3 — Model routing
-- [ ] A "vision" task and a "quick-answer" task hit different models (verify via OpenRouter dashboard/logs)
+> Routing is by **route**, not by task kind: Solve runs on the `light` chain, Review on the
+> `heavy` chain (R11/R16); automatic escalation by task kind was dropped (decisions.md ADR #8).
+
+- [ ] A Solve run is served by the `light` chain's primary and a Review run by the `heavy` chain's primary (check the served model in the OpenRouter activity log; the run-info line under the answer shows usage/cost)
+- [ ] Failover: with an unroutable primary (e.g. `VITE_DEFAULT_MODEL=anthropic/does-not-exist` in `.env`, rebuild) the answer still arrives from the next model of the chain, and the native log shows the retryable error followed by the second `llm_stream: model=…` line
 
 ### Agent improvements (R9–R19, 2026-09)
 - [ ] **Code as text (R15):** select code in the editor, `Ctrl+C`, press `Ctrl+Alt+X` (override `VITE_PASTE_CODE_ACCELERATOR`) — the HUD shows "Код: N строк"; SEND answers from the text (reviewer cites `стр. N` matching the editor lines)
@@ -91,7 +95,22 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 - [ ] **Prompt cache:** with an Anthropic primary model, the run-info line of the 2nd+ message in a dialog shows "кэш N" (needs the prompt over the model's caching minimum, e.g. a few screenshots); the OpenRouter activity log shows the cache read
 - [ ] **Nothing on disk (2026-10):** after a few dialogs, the app config dir (`%APPDATA%\com.aihelper.app`) contains no `ai-helper.db` (an old one from before the change can be deleted by hand)
 
+### Diagnostics (2026-10)
+> Native writes a log file (`tauri-plugin-log`): `%LOCALAPPDATA%\com.aihelper.app\logs\ai-helper.log`
+> (Windows; `~/.local/share/com.aihelper.app/logs/` on Linux), rotated at ~1 MB with one backup.
+> Logging policy (`src-tauri/src/lib.rs`): what happened — sizes, durations, models, errors —
+> never the key, prompts, screenshots, code or transcripts.
+
+- [ ] After a capture + send the log file exists and contains `started v…`, a `capture_screen: WxH (… KB png) from … in … ms` line and an `llm_stream: model=… messages=… images=…` line followed by `llm_stream: finish reason=stop … tokens=… cost=…`
+- [ ] A recording with speech logs `transcribe_audio: … s captured …` and `stt: ok on attempt 1, … bytes up, … chars back`; a silent one logs `silent under the gate — not uploaded`
+- [ ] **Policy:** search the log for the API key (`sk-or-`), for a phrase you typed into the prompt and for a sentence from the transcript — none of them appear (only lengths/counts)
+- [ ] Webview errors reach the file: in devtools run `console.error('probe 42')` — the log gets a `[ERROR]` line containing `probe 42`
+- [ ] ⚙ → **Copy diagnostics** turns into "✓ Copied"; pasting gives `AI-Helper diagnostics`, the version/platform line, the log path and the last log lines (`(empty)` if the file is empty)
+- [ ] `pnpm dev` in a browser: the button still works and pastes the stub (`platform: browser/n/a`, `(no native log in the browser)`)
+
 ## Reporting a bug
 
-Include: mode (browser/desktop), OS, phase, steps, expected vs actual,
-console/terminal output. Prefer adding a failing automated test when possible.
+Include: mode (browser/desktop), OS, phase, steps, expected vs actual, and the
+text from ⚙ → **Copy diagnostics** (version, platform, last native log lines —
+safe to paste, see the logging policy above). Prefer adding a failing automated
+test when possible.
