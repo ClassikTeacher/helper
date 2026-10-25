@@ -8,7 +8,7 @@ pub mod llm;
 pub mod ocr;
 pub mod secrets;
 
-use tauri::WebviewWindow;
+use tauri::{AppHandle, Manager, WebviewWindow};
 
 #[tauri::command]
 pub fn overlay_show(window: WebviewWindow) -> Result<(), String> {
@@ -25,12 +25,25 @@ pub fn overlay_hide(window: WebviewWindow) -> Result<(), String> {
 /// track a local "is it visible" flag that could drift out of sync.
 #[tauri::command]
 pub fn overlay_toggle(window: WebviewWindow) -> Result<(), String> {
+    toggle_window(&window)
+}
+
+/// The toggle itself, shared with the tray (F1): hide if visible, else show.
+pub fn toggle_window(window: &WebviewWindow) -> Result<(), String> {
     let visible = window.is_visible().map_err(|e| e.to_string())?;
     if visible {
         window.hide().map_err(|e| e.to_string())
     } else {
         window.show().map_err(|e| e.to_string())
     }
+}
+
+/// Toggle the HUD from outside a command (tray menu / left click).
+pub fn toggle_main_window(app: &AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window(crate::MAIN_WINDOW_LABEL)
+        .ok_or_else(|| "HUD window not found".to_string())?;
+    toggle_window(&window)
 }
 
 /// Reads the window's actual OS-level visibility. The read-then-act counterpart

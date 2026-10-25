@@ -4,7 +4,7 @@
 //! transcript does. The STT call reuses the existing OpenRouter key (the model
 //! is served by OpenRouter), so there is no separate `stt.api_key`.
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::commands::secrets::OPENROUTER_API_KEY_SECRET;
 use crate::dto::{AudioStartResult, TranscribeResult};
@@ -19,8 +19,10 @@ use crate::AppState;
 /// (up to the 200 ms event timeout), which would stall the event loop
 /// (2026-10 review §3.4).
 #[tauri::command(async)]
-pub fn audio_start_capture(state: State<'_, AppState>) -> Result<AudioStartResult, String> {
+pub fn audio_start_capture(app: AppHandle, state: State<'_, AppState>) -> Result<AudioStartResult, String> {
     state.audio.start()?;
+    // The tray indicator follows the recorder, not the webview (F1).
+    crate::tray::set_recording(&app, true);
     Ok(AudioStartResult {
         max_seconds: crate::infra::wasapi_loopback::max_recording_secs(),
     })
@@ -28,8 +30,10 @@ pub fn audio_start_capture(state: State<'_, AppState>) -> Result<AudioStartResul
 
 /// Stop capturing. Buffered audio is retained for the next `transcribe_audio`.
 #[tauri::command(async)]
-pub fn audio_stop_capture(state: State<'_, AppState>) -> Result<(), String> {
-    state.audio.stop()
+pub fn audio_stop_capture(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let result = state.audio.stop();
+    crate::tray::set_recording(&app, false);
+    result
 }
 
 /// Drain the captured audio, gate/trim its silence, encode it as a 16 kHz mono

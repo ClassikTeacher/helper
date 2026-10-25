@@ -15,7 +15,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }  # tray-icon: F1 — tray menu + recording indicator
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-store = "2"
@@ -25,6 +25,8 @@ tauri-plugin-clipboard-manager = "2"
 # console forwarding; `diagnostics_snapshot` returns its tail for bug reports.
 tauri-plugin-log = "2"
 log = "0.4"
+# F1 (2026-10): "Автозапуск" check item in the tray menu (HKCU\...\Run on Windows).
+tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
@@ -66,6 +68,12 @@ tokio = { version = "1", features = ["sync", "time"] }
 # crate; this app is Windows-first (same as keyring's windows-native backend).
 # See decisions.md ADR #14 phase-9 de-risk notes and spike 9.0.
 wasapi = "0.23"
+
+# F5 (2026-10): the active-window capture asks the OS for the foreground
+# window (`GetForegroundWindow`/`IsIconic`); the capture itself goes through
+# scap's `Target::Window`.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 # `net`/`io-util`: the stream-watchdog tests run a tiny local HTTP server.

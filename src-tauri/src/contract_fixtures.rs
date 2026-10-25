@@ -199,6 +199,13 @@ fn samples() -> Vec<Sample> {
             },
         ),
         sample(
+            "trayActionPayload",
+            "TrayActionPayloadDto",
+            &TrayActionPayload {
+                action: "stop-recording".to_string(),
+            },
+        ),
+        sample(
             "diagnosticsSnapshot",
             "DiagnosticsSnapshotDto",
             &DiagnosticsSnapshot {

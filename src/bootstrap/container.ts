@@ -20,6 +20,7 @@ import type { SecretsPort } from '@/core/application/ports/secrets.port';
 import type { AudioTranscriptionPort } from '@/core/application/ports/audio-transcription.port';
 import type { OcrPort } from '@/core/application/ports/ocr.port';
 import type { DiagnosticsPort } from '@/core/application/ports/diagnostics.port';
+import type { TrayPort } from '@/core/application/ports/tray.port';
 
 import { TauriScreenCaptureAdapter } from '@/infrastructure/tauri/tauri-screen-capture.adapter';
 import { TauriOverlayAdapter } from '@/infrastructure/tauri/tauri-overlay.adapter';
@@ -30,6 +31,7 @@ import { TauriAudioAdapter } from '@/infrastructure/tauri/tauri-audio.adapter';
 import { TauriClipboardAdapter } from '@/infrastructure/tauri/tauri-clipboard.adapter';
 import { TauriOcrAdapter } from '@/infrastructure/tauri/tauri-ocr.adapter';
 import { TauriDiagnosticsAdapter } from '@/infrastructure/tauri/tauri-diagnostics.adapter';
+import { TauriTrayAdapter } from '@/infrastructure/tauri/tauri-tray.adapter';
 import { OpenRouterLlmAdapter } from '@/infrastructure/llm/openrouter-llm.adapter';
 import { FakeLlmAdapter } from '@/infrastructure/mocks/fake-llm.adapter';
 import { FakeScreenCaptureAdapter } from '@/infrastructure/mocks/fake-screen-capture.adapter';
@@ -90,6 +92,8 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
   const hotkey: HotkeyPort = overrides.hotkey ?? (isTauri ? new TauriHotkeyAdapter() : noopHotkey);
   const clipboard: ClipboardPort =
     overrides.clipboard ?? (isTauri ? new TauriClipboardAdapter() : browserClipboard);
+  // F1: the native tray forwards "stop recording"; a browser has no tray.
+  const tray: TrayPort = overrides.tray ?? (isTauri ? new TauriTrayAdapter() : noopTray);
   // Bug-report snapshot (2026-10 review §5.5): the native log tail in Tauri, a
   // fixed stub in the browser.
   const diagnostics: DiagnosticsPort =
@@ -104,7 +108,7 @@ export function createContainer(overrides: ContainerOverrides = {}): AppContaine
       transcribeAudio: new TranscribeAudioUseCase(audio),
       getDiagnostics: new GetDiagnosticsUseCase(diagnostics),
     },
-    platform: { overlay, hotkey, clipboard },
+    platform: { overlay, hotkey, clipboard, tray },
   };
 }
 
@@ -156,4 +160,8 @@ const browserClipboard: ClipboardPort = {
 const noopHotkey: HotkeyPort = {
   register: async () => {},
   unregister: async () => {},
+};
+
+const noopTray: TrayPort = {
+  onAction: async () => () => {},
 };

@@ -104,6 +104,18 @@ Automated coverage is primary; this doc covers what's hard to assert in code
 - [ ] Rename the OCR folder: the answer still arrives (from the screenshots) and an amber line under it says "Код не распознан… `pnpm ocr:fetch`"; restore the folder — the next request uses OCR again without restarting the app
 - [ ] `VITE_TRANSCRIBE_ENGINE=cloud` brings back the model-call transcription (two requests in the activity log)
 
+### Tray (F1, 2026-10)
+> The app is resident: the HUD starts hidden and the process lives in the system tray.
+
+- [ ] After start a tray icon (the app icon) appears; hovering shows "AI-Helper"; left click shows the HUD, a second left click hides it
+- [ ] Right click opens the menu: "Показать / скрыть HUD", "Остановить запись и отправить" (disabled), "Запускать при входе в систему" (checkbox), "Выход"
+- [ ] Start a recording (hotkey or ● button), hide the HUD: within ~1 s the tray icon gets a red dot and the tooltip reads "AI-Helper — запись 0:0N", counting up; "Остановить запись и отправить" becomes enabled
+- [ ] Click "Остановить запись и отправить": the HUD comes up, the recording stops, the transcript is attached and the answer streams (same as the record hotkey's second press); the red dot disappears and the menu item is disabled again
+- [ ] Stopping from the HUD (■ Стоп / hotkey) also clears the red dot
+- [ ] Alt+F4 on the HUD only hides it (the tray icon stays, the hotkeys still work); "Выход" ends the process (no `AI-Helper` left in Task Manager)
+- [ ] "Запускать при входе в систему": checked → `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` gains an `AI-Helper` entry (or Task Manager → Startup lists it); after sign-out/sign-in the tray icon is there; unchecking removes the entry
+- [ ] The native log shows `tray: installed (autostart on|off)` and `tray: quit`
+
 ### Diagnostics (2026-10)
 > Native writes a log file (`tauri-plugin-log`): `%LOCALAPPDATA%\com.aihelper.app\logs\ai-helper.log`
 > (Windows; `~/.local/share/com.aihelper.app/logs/` on Linux), rotated at ~1 MB with one backup.

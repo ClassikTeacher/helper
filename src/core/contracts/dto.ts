@@ -157,6 +157,16 @@ export interface TranscribeResultDto {
   readonly text: string;
 }
 
+// --- Tray (F1, 2026-10) ------------------------------------------------------
+/**
+ * Payload of the `tray://action` event (native → webview): a tray-menu action
+ * the webview carries out (`TrayAction` in tray.port.ts). Mirror of
+ * `TrayActionPayload` in dto.rs.
+ */
+export interface TrayActionPayloadDto {
+  readonly action: string;
+}
+
 // --- Diagnostics (2026-10 review §5.5) --------------------------------------
 /** Result of `diagnosticsSnapshot`. Mirror of `DiagnosticsSnapshot` in dto.rs. */
 export interface DiagnosticsSnapshotDto {

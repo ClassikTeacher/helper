@@ -1,6 +1,7 @@
 import { createContext, useEffect, useMemo, type ReactNode } from 'react';
 import { createContainer } from './container';
 import { registerHotkeys, unregisterHotkeys } from './hotkeys';
+import { installTrayActions } from './tray-actions';
 import { useHudStore } from '@/ui/store/hud.store';
 import type { AppContainer, ContainerOverrides } from './container.types';
 
@@ -28,6 +29,17 @@ export function ServicesProvider({ children, container, overrides }: ServicesPro
   );
 
   useEffect(() => {
+    // F1: tray-menu actions (stop recording = send) share the hotkey paths.
+    let disposed = false;
+    let disposeTray: (() => void) | null = null;
+    installTrayActions(value)
+      .then((dispose) => {
+        if (disposed) dispose();
+        else disposeTray = dispose;
+      })
+      .catch((err) => {
+        console.error('Failed to subscribe to tray actions', err);
+      });
     registerHotkeys(value).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       console.error('Failed to register global hotkeys', err);
@@ -38,6 +50,8 @@ export function ServicesProvider({ children, container, overrides }: ServicesPro
       void value.platform.overlay.show();
     });
     return () => {
+      disposed = true;
+      disposeTray?.();
       unregisterHotkeys(value).catch((err) => {
         console.error('Failed to unregister global hotkeys', err);
       });

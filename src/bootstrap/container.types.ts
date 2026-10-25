@@ -13,6 +13,7 @@ import type { HotkeyPort } from '@/core/application/ports/hotkey.port';
 import type { LlmPort } from '@/core/application/ports/llm.port';
 import type { ScreenCapturePort } from '@/core/application/ports/screen-capture.port';
 import type { SecretsPort } from '@/core/application/ports/secrets.port';
+import type { TrayPort } from '@/core/application/ports/tray.port';
 
 /**
  * The DI container. UI consumes ONLY `useCases` (via useServices). `platform`
@@ -35,6 +36,8 @@ export interface AppContainer {
     readonly hotkey: HotkeyPort;
     /** Clipboard text for the paste-code hotkey (R15). */
     readonly clipboard: ClipboardPort;
+    /** Tray-menu actions the webview carries out (F1: stop recording = send). */
+    readonly tray: TrayPort;
   };
 }
 
@@ -49,4 +52,5 @@ export interface ContainerOverrides {
   readonly clipboard?: ClipboardPort;
   readonly ocr?: OcrPort;
   readonly diagnostics?: DiagnosticsPort;
+  readonly tray?: TrayPort;
 }

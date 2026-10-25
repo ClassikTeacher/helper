@@ -93,7 +93,7 @@ function createContainer(
   clipboard: ClipboardPort = createFakeClipboard(),
 ): Pick<AppContainer, 'platform' | 'useCases'> {
   return {
-    platform: { hotkey, overlay, clipboard },
+    platform: { hotkey, overlay, clipboard, tray: { onAction: async () => () => {} } },
     useCases: { captureScreenshot, analyzeScreenshot, transcribeAudio } as AppContainer['useCases'],
   };
 }
@@ -542,7 +542,9 @@ describe('unregisterHotkeys', () => {
     const hotkey = new FakeHotkeyPort();
     const overlay = createFakeOverlay();
 
-    await unregisterHotkeys({ platform: { hotkey, overlay, clipboard: createFakeClipboard() } });
+    await unregisterHotkeys({
+      platform: { hotkey, overlay, clipboard: createFakeClipboard(), tray: { onAction: async () => () => {} } },
+    });
 
     expect(hotkey.unregistered).toEqual([
       TOGGLE_HUD_ACCELERATOR,

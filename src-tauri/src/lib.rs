@@ -7,6 +7,7 @@ pub mod dto;
 pub mod infra;
 pub mod ports;
 pub mod services;
+pub mod tray;
 
 #[cfg(test)]
 mod contract_fixtures;
@@ -23,7 +24,7 @@ use ports::{AudioRecorder, OcrEngine, SecretStore};
 use services::capture_service::CaptureService;
 
 /// Label of the HUD window (`app.windows[].label` in tauri.conf.json).
-const MAIN_WINDOW_LABEL: &str = "main";
+pub const MAIN_WINDOW_LABEL: &str = "main";
 
 /// Native log file (`<app_log_dir>/<stem>.log`, written by `tauri-plugin-log`).
 /// `diagnostics_snapshot` reads its tail.
@@ -138,6 +139,10 @@ pub fn run() {
                 .rotation_strategy(RotationStrategy::KeepOne)
                 .build(),
         )
+        // F1: the tray's "Запускать при входе в систему" check item (the OS
+        // autostart entry — HKCU\...\Run on Windows). Native-only: the webview
+        // never calls the plugin, so it needs no capability.
+        .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
         // R15: the paste-code hotkey reads the clipboard natively (a global
@@ -157,7 +162,7 @@ pub fn run() {
                 .find(|w| w.label == MAIN_WINDOW_LABEL)
                 .ok_or_else(|| format!("window `{MAIN_WINDOW_LABEL}` is missing from tauri.conf.json"))?;
             let dev_url = if tauri::is_dev() { config.build.dev_url.clone() } else { None };
-            WebviewWindowBuilder::from_config(app.handle(), window_config)?
+            let window = WebviewWindowBuilder::from_config(app.handle(), window_config)?
                 .on_navigation(move |url| {
                     let allowed = is_allowed_navigation(url, dev_url.as_ref());
                     if !allowed {
@@ -166,6 +171,18 @@ pub fn run() {
                     allowed
                 })
                 .build()?;
+            // F1: closing the HUD (Alt+F4) hides it; the process lives on in the
+            // tray, whose "Выход" is the way to quit.
+            let hud = window.clone();
+            window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    if let Err(e) = hud.hide() {
+                        log::warn!("overlay: hide on close failed: {e}");
+                    }
+                }
+            });
+            app.manage(tray::Tray::install(app.handle())?);
             log::info!(
                 "started v{} ({} {})",
                 app.package_info().version,

@@ -233,6 +233,16 @@ pub struct DiagnosticsSnapshot {
     pub log_tail: String,
 }
 
+// --- Tray (F1, 2026-10) ------------------------------------------------------
+/// Payload of the `tray://action` event (native → webview): a tray-menu
+/// action whose handling lives in the webview ("stop-recording" = stop and
+/// send, phase 9). Mirror of `TrayActionPayloadDto` in dto.ts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayActionPayload {
+    pub action: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

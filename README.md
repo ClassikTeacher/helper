@@ -39,6 +39,16 @@ are compiled into the webview. All optional.
 | `AI_HELPER_DATA_COLLECTION` | `deny` | OpenRouter `provider.data_collection`; `allow` = default routing |
 | `AI_HELPER_ZDR` | unset | `true` routes only to zero-data-retention endpoints |
 
+## Tray
+
+The app is resident: the HUD starts hidden and the process lives in the system tray
+(F1, 2026-10). Left click toggles the HUD; the right-click menu has show/hide, "stop
+recording and send" (enabled only while recording), an autostart checkbox (the OS
+`Run` entry, via `tauri-plugin-autostart`) and quit. While loopback recording runs
+the tray icon carries a red dot and its tooltip counts the seconds — driven by the
+native recorder, so it cannot disagree with it. Closing the HUD window (Alt+F4)
+only hides it; "Выход" in the tray ends the process.
+
 ## Diagnostics and logs
 
 Native writes a rotating log file via `tauri-plugin-log` (~1 MB, one backup kept;

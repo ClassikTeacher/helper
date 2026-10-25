@@ -17,6 +17,7 @@ import type {
   SecretKeyRequestDto,
   SecretSetRequestDto,
   TranscribeResultDto,
+  TrayActionPayloadDto,
 } from '@/core/contracts/dto';
 
 export const captureRequest: CaptureRequestDto = {
@@ -154,6 +155,10 @@ export const audioStartResult: AudioStartResultDto = {
 
 export const transcribeResult: TranscribeResultDto = {
   "text": "привет"
+};
+
+export const trayActionPayload: TrayActionPayloadDto = {
+  "action": "stop-recording"
 };
 
 export const diagnosticsSnapshot: DiagnosticsSnapshotDto = {
